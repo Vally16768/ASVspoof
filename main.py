@@ -137,9 +137,9 @@ def main():
     print(f"Infs in X_train after normalization: {np.isinf(X_train).sum()}")
     
     # Reshape data for CNN input
-    X_train = X_train[..., np.newaxis]
-    X_val = X_val[..., np.newaxis]
-    X_test = X_test[..., np.newaxis]
+    X_train = np.expand_dims(X_train, -1)
+    X_val = np.expand_dims(X_val, -1)
+    X_test = np.expand_dims(X_test, -1)
 
     n_time_steps, n_features = X_train.shape[1], X_train.shape[2]
     n_classes = len(le.classes_)
