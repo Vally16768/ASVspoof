@@ -37,7 +37,7 @@ database/data/asvspoof2019/
 
 ## Extrage feature-uri + splits
 ```bash
-make extract           # rulează asvspoof_features_pipeline.py extract
+make extract WORKERS=24          # rulează asvspoof_features_pipeline.py extract
 ```
 Scrie:
 ```
@@ -91,11 +91,3 @@ ASVspoof/
     download_asvspoof_la.sh
     data/asvspoof2019/...
 ```
-
-## Ce am eliminat / considerat inutil
-- prototipuri vechi de feature extraction / notebook-uri nefolosite;
-- scripturi ad-hoc din `scripts/` care duplică acum funcționalitatea din
-  `asvspoof_features_pipeline.py`.
-
-> Dacă ai fișiere vechi în `scripts/` pentru extragere/training, le poți șterge în siguranță.
-Păstrăm strict: **download + verificare date** și **pipeline-ul unificat de feature-uri + splits**.
