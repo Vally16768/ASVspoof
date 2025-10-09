@@ -37,7 +37,7 @@ database/data/asvspoof2019/
 
 ## Extrage feature-uri + splits
 ```bash
-make extract WORKERS=24          # rulează asvspoof_features_pipeline.py extract
+make extract WORKERS=36          # rulează asvspoof_features_pipeline.py extract
 ```
 Scrie:
 ```

@@ -11,7 +11,7 @@ MAKEFLAGS += --no-builtin-rules
 PY         ?= python
 DATA_ROOT  ?= database/data/asvspoof2019
 INDEX_DIR  ?= $(DATA_ROOT)/index
-WORKERS    ?= 24
+WORKERS    ?= 36
 
 export ASVSPOOF_ROOT ?= $(CURDIR)/$(DATA_ROOT)
 

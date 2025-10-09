@@ -31,7 +31,7 @@ Usage examples
 --------------
 # 1) Extract features (multi-process) and build splits + parquet
 python asvspoof_features_pipeline.py extract \
-  --data-root database/data/asvspoof2019 --workers 8
+  --data-root database/data/asvspoof2019 --workers 36
 
 # 2) Materialize ALL combos into X/y NPZs (train/val/test)
 python asvspoof_features_pipeline.py combos \
