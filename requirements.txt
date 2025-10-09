@@ -6,3 +6,6 @@ librosa
 soundfile
 matplotlib
 pyarrow
+PyWavelets 
+tqdm 
+ffmpeg-python
