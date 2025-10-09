@@ -1,5 +1,5 @@
 # =========================
-# ASVspoof Makefile (full)
+# ASVspoof Makefile 
 # =========================
 
 SHELL := /bin/bash
@@ -32,7 +32,7 @@ check_la:
 
 check_scripts:
 > set -euo pipefail
-> test -f "asvspoof_features_pipeline.py" || { echo "[!] Missing asvspoof_features_pipeline.py at repo root"; exit 1; }
+> test -f "asvspoof/cli.py"                      || { echo "[!] Missing asvspoof/cli.py (package entrypoint)"; exit 1; }
 > test -f "scripts/make_index_from_protocols.py" || { echo "[!] Missing scripts/make_index_from_protocols.py"; exit 1; }
 > test -f "scripts/train_all_combos.py"          || { echo "[!] Missing scripts/train_all_combos.py"; exit 1; }
 > echo "[✓] Required scripts found"
@@ -49,9 +49,8 @@ help:
 > echo "  check_la            - verify ASVspoof LA directory structure"
 > echo "  check_scripts       - verify required scripts exist"
 > echo "  index               - build train/dev CSVs (with labels), skips eval"
-> echo "  results             - show top 20 combinations"
-> echo "  clean               - remove features/seq and temp_data"
-> echo "  extract             - extract all features + splits + parquet/csv"
+> echo "  extract             - extract all features + splits + parquet/csv (via asvspoof.cli)"
+> echo "  list                - print feature groups and letter mapping"
 > echo "  combos_all          - materialize ALL combinations (NPZ train/val/test)"
 > echo "  combos_codes        - only given combinations (set CODES='AB M AEMNO')"
 > echo "  train_all_combos    - train on all materialized combinations"
@@ -60,20 +59,15 @@ help:
 > echo "  nohup_combos_all    - run combos_all with nohup, log in logs/"
 > echo "  nohup_train_all     - run train_all_combos with nohup, log in logs/"
 > echo "  combos              - README-compatible alias: make combos codes='AB AEMNO M'"
+> echo "  clean               - remove features/seq and temp_data"
 > echo "  clean_combos        - remove only $(INDEX_DIR)/combos"
 
 # ----- Index (protocols) -----
-.PHONY: index features_seq pack dataset train features_tabular search results clean
+.PHONY: index results clean
 
 index: check_la check_scripts
 > $(PY) scripts/make_index_from_protocols.py --root "$(DATA_ROOT)" --out "$(INDEX_DIR)" --splits train dev
 > ls -lh "$(INDEX_DIR)"/train.csv "$(INDEX_DIR)"/val.csv
-
-dataset: pack
-> echo "[✓] Dataset prepared in $(PACKED_DIR)"
-
-train: check_scripts
-> $(PY) main.py
 
 results:
 > echo "Top 20 combinations (by mean AUC KFold):"
@@ -83,24 +77,29 @@ clean:
 > rm -rf "$(FEAT_SEQ_DIR)" "$(TEMP_DIR)"
 > echo "[*] Cleaned features/seq and temp_data"
 
-# ----- Features + Combos (new pipeline) -----
-.PHONY: extract combos_all combos_codes
+# ----- Features + Combos (new pipeline via CLI) -----
+.PHONY: extract list combos_all combos_codes
 
 # Extract features + splits + Parquet/CSV into $(INDEX_DIR)
 extract: check_la check_scripts
-> $(PY) asvspoof_features_pipeline.py extract \
+> $(PY) -m asvspoof.cli extract \
 >   --data-root "$(DATA_ROOT)" --workers $(WORKERS)
+
+# Print mapping (letters -> feature groups) and total combo count
+list: check_scripts
+> $(PY) -m asvspoof.cli list
 
 # Generate ALL combinations (32767) -> $(INDEX_DIR)/combos/{train,val,test}
 combos_all: extract check_scripts
-> $(PY) asvspoof_features_pipeline.py combos \
+> $(PY) -m asvspoof.cli combos \
 >   --data-root "$(DATA_ROOT)" --all
 
 # Generate only specific codes (e.g., AB AEMNO M)
 combos_codes: extract check_scripts
 > test -n "$(CODES)" || { echo "Set CODES='AB AEMNO M'"; exit 1; }
-> $(PY) asvspoof_features_pipeline.py combos \
->   --data-root "$(DATA_ROOT)" --codes $(CODES)
+> CODES_UP=$$(echo "$(CODES)" | tr '[:lower:]' '[:upper:]'); \
+  $(PY) -m asvspoof.cli combos \
+    --data-root "$(DATA_ROOT)" --codes $$CODES_UP
 
 # ----- Training on all materialized combinations -----
 .PHONY: train_all_combos top_results
@@ -123,7 +122,7 @@ top_results:
 nohup_extract: check_la check_scripts
 > mkdir -p logs
 > LOG="logs/extract_$$(date +%F_%H-%M-%S).log"; \
-  nohup $(PY) asvspoof_features_pipeline.py extract \
+  nohup $(PY) -m asvspoof.cli extract \
     --data-root "$(DATA_ROOT)" --workers $(WORKERS) \
     > "$$LOG" 2>&1 & \
   echo "PID=$$!  log=$$LOG"
@@ -131,7 +130,7 @@ nohup_extract: check_la check_scripts
 nohup_combos_all: extract check_scripts
 > mkdir -p logs
 > LOG="logs/combos_all_$$(date +%F_%H-%M-%S).log"; \
-  nohup $(PY) asvspoof_features_pipeline.py combos \
+  nohup $(PY) -m asvspoof.cli combos \
     --data-root "$(DATA_ROOT)" --all \
     > "$$LOG" 2>&1 & \
   echo "PID=$$!  log=$$LOG"
@@ -149,8 +148,9 @@ nohup_train_all: check_scripts check_combos_dir
 # README-compatible alias: make combos codes="AB AEMNO M"
 combos: extract check_scripts
 > test -n "$(codes)" || { echo "Set codes='AB AEMNO M'"; exit 1; }
-> $(PY) asvspoof_features_pipeline.py combos \
->   --data-root "$(DATA_ROOT)" --codes $(codes)
+> CODES_UP=$$(echo "$(codes)" | tr '[:lower:]' '[:upper:]'); \
+  $(PY) -m asvspoof.cli combos \
+    --data-root "$(DATA_ROOT)" --codes $$CODES_UP
 
 # Remove only combinations
 .PHONY: clean_combos
