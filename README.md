@@ -8,7 +8,8 @@ This repository prepares the ASVspoof 2019 Logical Access (LA) dataset and extra
 
 ```
 .
-├── asvspoof_features_pipeline.py   # main CLI: build index, extract features, splits, combos
+├── asvspoofy
+│   └──    # main CLI: build index, extract features, splits, combos
 ├── constants.py                    # single source of repo configuration (paths, defaults)
 ├── Makefile                         # convenience targets to run common tasks
 ├── database/
