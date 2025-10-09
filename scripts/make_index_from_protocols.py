@@ -1,36 +1,35 @@
 #!/usr/bin/env python3
 """
-Build ASVspoof 2019 LA indices.
+Build ASVspoof 2019 LA indices using ONLY constants.py.
 
-- train.csv : labeled   (train minus a stratified held-out test)
-- val.csv   : labeled   (dev -> validation)
-- test.csv  : labeled   (held-out, stratified from train by label; size = constants.test_size)
-- eval.list : unlabeled (paths only; blind evaluation set)
-
-The script prefers the official LA cm protocol files to enumerate files,
-but will gracefully fall back to scanning the eval/flac directory for eval.list.
-
-Requires:
-  constants.py at project root with: test_size = 0.20
+Outputs (under <constants.directory>/<constants.index_folder_name>):
+  - train.csv : labeled   (train minus a stratified held-out test)
+  - val.csv   : labeled   (dev -> validation)
+  - test.csv  : labeled   (held-out, stratified from train by label; size = constants.test_size)
+  - eval.list : unlabeled (paths only; blind evaluation set)
 """
 
 from __future__ import annotations
-import argparse
 import csv
 import os
 import random
 from pathlib import Path
 from typing import Iterable, List, Tuple, Dict, Set
 
-# ---- Config from constants.py (with robust fallback) -------------------------
-try:
-    from constants import test_size as TEST_SIZE  # noqa: N812
-except Exception:
-    # Allows override via env TEST_SIZE, otherwise defaults to 0.20
-    TEST_SIZE = float(os.getenv("TEST_SIZE", "0.20"))
+# ---- Config from constants.py -------------------------------------------------
+import importlib, importlib.util, sys
+sys.path.insert(0, os.getcwd())
 
-DEFAULT_SEED = 1337
+spec = importlib.util.find_spec("constants")
+if not spec:
+    raise SystemExit("[!] constants.py not found on PYTHONPATH / CWD")
 
+constants = importlib.import_module("constants")
+
+DATA_ROOT = Path(constants.directory).resolve()
+INDEX_DIRNAME = getattr(constants, "index_folder_name", "index")
+TEST_SIZE = float(getattr(constants, "test_size", 0.20))
+SEED = int(getattr(constants, "random_state", 1337))
 
 # ---- Helpers: protocol parsing ------------------------------------------------
 def parse_trl_line(line: str) -> Tuple[str, str] | None:
@@ -51,6 +50,8 @@ def parse_trl_line(line: str) -> Tuple[str, str] | None:
 
 def read_trl_labeled(p: Path) -> List[Tuple[str, str]]:
     items: List[Tuple[str, str]] = []
+    if not p.exists():
+        raise FileNotFoundError(p)
     with p.open("r", encoding="utf-8", errors="ignore") as f:
         for ln in f:
             pr = parse_trl_line(ln)
@@ -65,6 +66,8 @@ def read_any_fids(p: Path) -> List[str]:
     (useful for eval lists that sometimes ship without keys).
     """
     fids: List[str] = []
+    if not p.exists():
+        return fids
     with p.open("r", encoding="utf-8", errors="ignore") as f:
         for ln in f:
             parts = ln.strip().split()
@@ -113,7 +116,7 @@ def map_rows(root: Path, pairs: Iterable[Tuple[str, str]], split: str) -> List[T
 def stratified_split(
     rows: List[Tuple[str, str]],
     test_size: float,
-    seed: int = DEFAULT_SEED,
+    seed: int,
 ) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
     """
     Stratified split by the 'label' (2 classes: bonafide/spoof).
@@ -121,9 +124,7 @@ def stratified_split(
     """
     by_label: Dict[str, List[int]] = {"bonafide": [], "spoof": []}
     for i, (_, label) in enumerate(rows):
-        if label not in by_label:
-            by_label[label] = []
-        by_label[label].append(i)
+        by_label.setdefault(label, []).append(i)
 
     rng = random.Random(seed)
     test_indices: Set[int] = set()
@@ -132,9 +133,12 @@ def stratified_split(
         if not idxs:
             continue
         n_total = len(idxs)
-        n_test = max(1, int(round(test_size * n_total))) if n_total > 1 else 1
-        n_test = min(n_test, n_total - 1) if n_total > 1 else n_test  # keep at least 1 for train
-        chosen = set(rng.sample(idxs, n_test))
+        if n_total == 1:
+            chosen = {idxs[0]}  # singletons go to test
+        else:
+            n_test = max(1, int(round(test_size * n_total)))
+            n_test = min(n_test, n_total - 1)  # keep at least 1 for train
+            chosen = set(rng.sample(idxs, n_test))
         test_indices |= chosen
 
     test_rows = [rows[i] for i in sorted(test_indices)]
@@ -143,29 +147,20 @@ def stratified_split(
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate index/{train,val,test}.csv and index/eval.list for ASVspoof 2019 LA")
-    ap.add_argument("--data-root", required=True, help="Dataset root, e.g. data/asvspoof2019 or database/data/asvspoof2019")
-    ap.add_argument("--protocols-root", default=None,
-                    help="Folder with ASVspoof2019_LA_cm_protocols (optional; auto-detected otherwise)")
-    ap.add_argument("--seed", type=int, default=DEFAULT_SEED, help=f"Random seed for the stratified split (default: {DEFAULT_SEED})")
-    ap.add_argument("--test-size", type=float, default=None,
-                    help="Override constants.test_size at runtime (e.g., 0.2).")
-    args = ap.parse_args()
-
-    root = Path(args.data_root).resolve()
+    root = DATA_ROOT
     if not root.exists():
         raise SystemExit(f"[!] Data root not found: {root}")
 
-    # Resolve protocol folder
-    candidates = [
-        Path(args.protocols_root) if args.protocols_root else None,
+    # Check basic structure quickly (mirrors Makefile's check_la)
+    for d in [
+        root / "ASVspoof2019_LA_train" / "flac",
+        root / "ASVspoof2019_LA_dev" / "flac",
         root / "ASVspoof2019_LA_cm_protocols",
-        root.parent / "asvspoof2019_labelled" / "ASVspoof2019_LA_cm_protocols",
-    ]
-    protos = next((c for c in candidates if c and c.exists()), None)
-    if not protos:
-        raise SystemExit("[!] Could not find ASVspoof2019_LA_cm_protocols")
+    ]:
+        if not d.exists():
+            raise SystemExit(f"[!] Missing required directory: {d}")
 
+    protos = root / "ASVspoof2019_LA_cm_protocols"
     train_trn = protos / "ASVspoof2019.LA.cm.train.trn.txt"
     dev_trl   = protos / "ASVspoof2019.LA.cm.dev.trl.txt"
     eval_trl  = protos / "ASVspoof2019.LA.cm.eval.trl.txt"
@@ -178,29 +173,27 @@ def main():
     rows_train_full = map_rows(root, read_trl_labeled(train_trn), "train")
     rows_val        = map_rows(root, read_trl_labeled(dev_trl), "dev")
 
-    # Test size selection (constants.py → CLI override → env/default)
-    test_size = args.test_size if args.test_size is not None else TEST_SIZE
+    # Test size & seed strictly from constants.py
+    test_size = TEST_SIZE
+    seed = SEED
     if not (0.0 < test_size < 1.0):
-        raise SystemExit(f"[!] Invalid test_size={test_size}. Expected (0,1).")
+        raise SystemExit(f"[!] Invalid constants.test_size={test_size}. Expected (0,1).")
 
-    rows_train, rows_test = stratified_split(rows_train_full, test_size=test_size, seed=args.seed)
+    rows_train, rows_test = stratified_split(rows_train_full, test_size=test_size, seed=seed)
 
     # Eval list (unlabeled)
     eval_paths: List[str] = []
+    base_eval = root / "ASVspoof2019_LA_eval" / "flac"
     if eval_trl.exists():
-        # Prefer protocol list if available
         fids = read_any_fids(eval_trl)
-        base = root / "ASVspoof2019_LA_eval" / "flac"
-        eval_paths = [str((base / f"{fid}.flac").relative_to(root)) for fid in fids]
+        eval_paths = [str((base_eval / f"{fid}.flac").relative_to(root)) for fid in fids]
     else:
-        # Fallback: scan directory
-        base = root / "ASVspoof2019_LA_eval" / "flac"
-        if not base.exists():
-            raise SystemExit(f"[!] Eval FLAC dir not found: {base}")
-        eval_paths = [str(p.relative_to(root)) for p in sorted(base.glob("*.flac"))]
+        if not base_eval.exists():
+            raise SystemExit(f"[!] Eval FLAC dir not found: {base_eval}")
+        eval_paths = [str(p.relative_to(root)) for p in sorted(base_eval.glob("*.flac"))]
 
-    # Write outputs
-    idx = root / "index"
+    # Write outputs under <data-root>/<INDEX_DIRNAME>
+    idx = root / INDEX_DIRNAME
     write_csv(idx / "train.csv", rows_train)
     write_csv(idx / "val.csv",   rows_val)
     write_csv(idx / "test.csv",  rows_test)
@@ -218,7 +211,7 @@ def main():
     print(f"    val.csv   : {len(rows_val)}    by label {count_by_label(rows_val)}")
     print(f"    test.csv  : {len(rows_test)}   by label {count_by_label(rows_test)}")
     print(f"    eval.list : {len(eval_paths)}  (paths only)")
-    print(f"    test_size : {test_size}  seed={args.seed}")
+    print(f"    test_size : {test_size}  seed={seed}")
 
 
 if __name__ == "__main__":
