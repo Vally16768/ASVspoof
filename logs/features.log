@@ -1,4 +1,0 @@
-nohup: ignoring input
-[✓] features_tabular/A/train.parquet  (25380 rânduri, 160 coloane)
-[✓] features_tabular/A/val.parquet  (24844 rânduri, 160 coloane)
-[✓] features_tabular/A/test.parquet  (71237 rânduri, 160 coloane)
