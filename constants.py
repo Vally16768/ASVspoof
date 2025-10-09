@@ -7,8 +7,7 @@ directory = os.getenv("ASVSPOOF_ROOT", "dataset")
 # === Dataset / split settings ===
 sampling_rate   = 16000
 random_state    = 42
-test_size       = 0.15     # if you create train/test splits programmatically
-validation_size = 0.15     # fraction of train -> validation (if used)
+test_size       = 0.20     
 
 # === Folders / filenames ===
 index_folder_name                       = "index"

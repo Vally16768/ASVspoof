@@ -12,7 +12,6 @@ PY ?= python
 
 # ---------- Read config from constants.py ----------
 # These shell expansions import constants.py once per var.
-# If you add new values in constants.py (e.g., "workers"), they’ll be picked up here.
 
 # Root of dataset (constants.directory)
 DATA_ROOT := $(shell $(PY) -c "import sys,os; sys.path.insert(0, os.getcwd()); import constants; print(constants.directory)")
@@ -29,28 +28,14 @@ TEMP_DIR := $(TEMP_DIRNAME)
 # File names from constants
 SAVE_COMBOS_NAME_RAW := $(shell $(PY) -c "import sys,os; sys.path.insert(0, os.getcwd()); import constants; print(constants.save_combinations_file_name)")
 # Ensure CSV extension (train_all_combos.py does the same conversion)
-SAVE_COMBOS_CSV := $(shell $(PY) - <<'PY'
-import sys,os; sys.path.insert(0, os.getcwd()); import constants
-name = constants.save_combinations_file_name
-print(name if name.lower().endswith('.csv') else (name.rsplit('.',1)[0] + '.csv'))
-PY
-)
+SAVE_COMBOS_CSV := $(shell $(PY) -c "import sys,os,os.path; sys.path.insert(0, os.getcwd()); import constants; name=constants.save_combinations_file_name; print(name if name.lower().endswith('.csv') else (os.path.splitext(name)[0]+'.csv'))")
 BEST_COMBOS_TXT := $(shell $(PY) -c "import sys,os; sys.path.insert(0, os.getcwd()); import constants; print(constants.save_the_best_combination_file_name)")
 
 # Optional: workers (fallback to CPU count if not defined in constants.py)
-WORKERS := $(shell $(PY) - <<'PY'
-import os, sys
-sys.path.insert(0, os.getcwd())
-try:
-  import constants
-  w = getattr(constants, "workers", None)
-  if w is None:
-    w = os.cpu_count() or 1
-  print(w)
-except Exception:
-  print(1)
-PY
-)
+WORKERS := $(shell $(PY) -c "import sys,os; sys.path.insert(0, os.getcwd()); \
+try: import constants; w=getattr(constants,'workers',None) \
+except Exception: w=None; \
+print(w if w is not None else (os.cpu_count() or 1))")
 
 # You can still override these via the environment if you really need to.
 export ASVSPOOF_ROOT ?= $(DATA_ROOT)
