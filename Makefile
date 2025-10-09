@@ -11,6 +11,7 @@ MAKEFLAGS += --no-builtin-rules
 PY         ?= python
 DATA_ROOT  ?= database/data/asvspoof2019
 INDEX_DIR  ?= $(DATA_ROOT)/index
+WORKERS    ?= 24
 
 export ASVSPOOF_ROOT ?= $(CURDIR)/$(DATA_ROOT)
 
@@ -107,7 +108,7 @@ clean:
 # Extrage features + splits + Parquet/CSV în $(INDEX_DIR)
 extract: check_la check_scripts
 > $(PY) asvspoof_features_pipeline.py extract \
->   --data-root "$(DATA_ROOT)" --workers 24
+>   --data-root "$(DATA_ROOT)" --workers $(WORKERS)
 
 # Generează TOATE combinațiile (32767) -> $(INDEX_DIR)/combos/{train,val,test}
 combos_all: extract check_scripts
@@ -142,7 +143,7 @@ nohup_extract: check_la check_scripts
 > mkdir -p logs
 > LOG="logs/extract_$$(date +%F_%H-%M-%S).log"; \
   nohup $(PY) asvspoof_features_pipeline.py extract \
-    --data-root "$(DATA_ROOT)" --workers 24 \
+    --data-root "$(DATA_ROOT)" --workers $(WORKERS) \
     > "$$LOG" 2>&1 & \
   echo "PID=$$!  log=$$LOG"
 
@@ -163,3 +164,15 @@ nohup_train_all: check_scripts check_combos_dir
     --max-iter 200 --batch-size 256 --seed 42 \
     > "$$LOG" 2>&1 & \
   echo "PID=$$!  log=$$LOG"
+
+# Alias compatibil cu README: make combos codes="AB AEMNO M"
+combos: extract check_scripts
+> test -n "$(codes)" || { echo "Setează codes='AB AEMNO M'"; exit 1; }
+> $(PY) asvspoof_features_pipeline.py combos \
+>   --data-root "$(DATA_ROOT)" --codes $(codes)
+
+# Curățare doar a combinațiilor
+.PHONY: clean_combos
+clean_combos:
+> rm -rf "$(INDEX_DIR)/combos"
+> echo "[*] Șters $(INDEX_DIR)/combos"

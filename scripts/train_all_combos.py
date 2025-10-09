@@ -34,6 +34,7 @@ def train_all(root: Path, out_csv: Path, max_iter=200, batch_size=256, seed=42):
             else:
                 Xte, yte = Xva, yva
 
+            val_fraction = 0.1  # menține early stopping funcțional
             pipe = make_pipeline(
                 SimpleImputer(strategy="median"),
                 StandardScaler(),
@@ -41,7 +42,7 @@ def train_all(root: Path, out_csv: Path, max_iter=200, batch_size=256, seed=42):
                               activation="relu", solver="adam",
                               batch_size=batch_size, max_iter=max_iter,
                               random_state=seed, early_stopping=True,
-                              n_iter_no_change=10, validation_fraction=0.1 if Xva is None else 0.0,
+                              n_iter_no_change=10, validation_fraction=val_fraction,
                               verbose=False)
             )
             pipe.fit(Xtr, ytr)

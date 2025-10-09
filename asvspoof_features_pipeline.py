@@ -590,6 +590,15 @@ def cmd_extract(args):
 
     print('[2/4] Extracting features...')
     feat_df = extract_all_features(df_index, cfg)
+    # Sanity check: trebuie să existe cel puțin o coloană de feature
+    meta_cols = {'split','file_id','path','label','target'}
+    feat_cols = [c for c in feat_df.columns if c not in meta_cols]
+    if len(feat_cols) == 0:
+        raise SystemExit(
+            "N-am extras niciun feature. Verifică dependențele (librosa, soundfile, pywt) "
+            "și existența fișierelor .flac pe disk."
+        )
+
 
     print('[3/4] Creating CV splits...')
     feat_df['cv_split'] = build_splits(feat_df, split_cfg)
