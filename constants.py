@@ -1,8 +1,6 @@
-import os
-
 # === Dataset location (ASVspoof 2019 LA) ===
 # If ASVSPOOF_ROOT is not set, fall back to "dataset"
-directory = os.getenv("ASVSPOOF_ROOT", "dataset")
+directory = "database/data/asvspoof2019"
 
 # === Dataset / split settings ===
 sampling_rate   = 16000
@@ -70,3 +68,15 @@ cb_reduce_lr_monitor = "val_loss"
 cb_reduce_lr_factor  = 0.5
 cb_reduce_lr_patience= 3
 cb_reduce_lr_min_lr  = 1e-6
+
+
+# ASVspoof 2019 LA subdirectories (relative to `directory`)
+la_train_flac_subdir = "ASVspoof2019_LA_train/flac"
+la_dev_flac_subdir   = "ASVspoof2019_LA_dev/flac"
+la_eval_flac_subdir  = "ASVspoof2019_LA_eval/flac"
+la_protocols_subdir  = "ASVspoof2019_LA_cm_protocols"
+
+# Protocol filenames (inside la_protocols_subdir)
+la_train_trn_filename = "ASVspoof2019.LA.cm.train.trn.txt"
+la_dev_trl_filename   = "ASVspoof2019.LA.cm.dev.trl.txt"
+la_eval_trl_filename  = "ASVspoof2019.LA.cm.eval.trl.txt"
