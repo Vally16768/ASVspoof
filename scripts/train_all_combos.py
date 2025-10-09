@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
 """
 Train all available combinations by delegating to train_cnn1d.py.
-- Discovers combos (NPZ stems under index/combos/train, or lines in temp_data/combinations_ordered_by_accuracy.txt).
-- Calls train_cnn1d.py for each combo (so that data loading, testing and metrics saving are centralized).
-- Aggregates results (combo, accuracy, results_dir, error) into a CSV.
 
-Usage examples:
-  python train_all_combos.py --data-root /path/to/asvspoof2019
-  python train_all_combos.py --epochs 50 --batch-size 128
-  python train_all_combos.py --combos-file temp_data/combinations_ordered_by_accuracy.txt
+What it does
+------------
+1) Discovers combos:
+   - NPZ stems under <data_root>/<index_folder_name>/combos/train/*.npz
+   - OR lines in <repo>/<temp_data_folder_name>/<save_the_best_combination_file_name>
+   - Fallback: constants.cnn1d_default_combo_name
+
+2) For each combo it calls train_cnn1d.py (which loads data, trains, evaluates,
+   and saves per-run artifacts in <results_folder>/<combo_name>/).
+
+3) Aggregates (combo, accuracy, results_dir, best_model, final_model, error)
+   into a single CSV in <results_folder>/<save_combinations_file_name or .csv>.
+
+Notes
+-----
+- No training hyperparameters are taken from CLI; train_cnn1d.py reads *all*
+  hyperparameters from constants.py. Here we only allow optional overrides for:
+  --data-root, --index-dir, --combos-file, --out-csv.
 """
 
 import argparse
@@ -27,22 +38,34 @@ if str(REPO_ROOT) not in sys.path:
 
 from constants import (
     # dataset & folders
-    directory as DEFAULT_DATA_ROOT,
+    directory as CFG_DATA_ROOT,
     index_folder_name as INDEX_DIRNAME,
     results_folder as RESULTS_ROOT,
     temp_data_folder_name as TEMP_DIRNAME,
-    # defaults for model/training
-    sampling_rate as DEFAULT_SR,
-    cnn1d_n_mfcc as DEFAULT_N_MFCC,
-    cnn1d_duration_seconds as DEFAULT_DURATION,
-    cnn1d_batch_size as DEFAULT_BATCH_SIZE,
-    cnn1d_epochs as DEFAULT_EPOCHS,
-    random_state as DEFAULT_SEED,
     # filenames
     accuracy_txt_filename as ACC_TXT_NAME,
     final_model_filename as FINAL_MODEL_NAME,
     best_model_filename as BEST_MODEL_NAME,
+    save_the_best_combination_file_name as BEST_COMBOS_TXT,
+    save_combinations_file_name as SAVE_COMBOS_NAME,
+    # default combo tag
+    cnn1d_default_combo_name as DEFAULT_COMBO,
 )
+
+# ---------- Utilities ----------
+def sanitize_combo_name(name: str) -> str:
+    """Turn display strings like 'A+B+C' into a safe directory name."""
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_")
+
+def _train_script_path() -> Path:
+    """Find train_cnn1d.py either at repo root or under scripts/."""
+    c1 = REPO_ROOT / "train_cnn1d.py"
+    if c1.exists():
+        return c1
+    c2 = REPO_ROOT / "scripts" / "train_cnn1d.py"
+    if c2.exists():
+        return c2
+    raise SystemExit("[!] Could not locate train_cnn1d.py at repo root or scripts/")
 
 # ---------- Combo discovery ----------
 def read_combos_from_npz(index_dir: Path) -> list[str]:
@@ -51,10 +74,6 @@ def read_combos_from_npz(index_dir: Path) -> list[str]:
     if not combos_dir.exists():
         return []
     return sorted(p.stem for p in combos_dir.glob("*.npz"))
-
-def sanitize_combo_name(name: str) -> str:
-    """Turn display strings like 'A+B+C' into a safe directory name."""
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_")
 
 def read_combos_from_txt(txt_path: Path) -> list[str]:
     """
@@ -73,22 +92,18 @@ def read_combos_from_txt(txt_path: Path) -> list[str]:
             continue
         token = ln.split()[0]
         combos.append(token)
-    # Keep original tokens for display; sanitize only when we pass as folder name
     return sorted(set(combos))
 
 def find_available_combos(data_root: Path) -> list[str]:
-    """Try NPZ stems first, then the temp text file. Fallback to a single default combo."""
+    """Try NPZ stems first, then the temp text file. Fallback to DEFAULT_COMBO."""
     index_dir = data_root / INDEX_DIRNAME
     combos = read_combos_from_npz(index_dir)
     if combos:
         return combos
-    # try temp txt
-    txt = REPO_ROOT / TEMP_DIRNAME / "combinations_ordered_by_accuracy.txt"
+    txt = REPO_ROOT / TEMP_DIRNAME / BEST_COMBOS_TXT
     combos = read_combos_from_txt(txt)
     if combos:
         return combos
-    # final fallback: just one reasonable default
-    from constants import cnn1d_default_combo_name as DEFAULT_COMBO
     return [DEFAULT_COMBO]
 
 # ---------- Train one combo by calling train_cnn1d.py ----------
@@ -96,30 +111,18 @@ def run_single_combo(
     combo_display: str,
     data_root: Path,
     index_dir: Path | None,
-    sr: int,
-    n_mfcc: int,
-    duration: float,
-    batch_size: int,
-    epochs: int,
-    seed: int,
 ) -> tuple[float | None, Path, str | None]:
     """
-    Calls train_cnn1d.py with the provided args.
+    Calls train_cnn1d.py with minimal args (constants drive the rest).
     Returns: (accuracy or None, results_dir, error or None)
     """
     safe_name = sanitize_combo_name(combo_display)
-    train_script = REPO_ROOT / "scripts" / "train_cnn1d.py"
+    train_script = _train_script_path()
 
     cmd = [
         sys.executable, str(train_script),
         "--data-root", str(data_root),
         "--combo-name", safe_name,
-        "--sr", str(sr),
-        "--n-mfcc", str(n_mfcc),
-        "--duration", str(duration),
-        "--batch-size", str(batch_size),
-        "--epochs", str(epochs),
-        "--seed", str(seed),
     ]
     if index_dir is not None:
         cmd += ["--index-dir", str(index_dir)]
@@ -135,7 +138,6 @@ def run_single_combo(
             m = re.search(r"Test\s+accuracy:\s*([0-9.]+)", acc_file.read_text(encoding="utf-8", errors="ignore"))
             if m:
                 acc = float(m.group(1))
-        # If the run failed, leave acc as None and capture a lightweight message
         err = None if ret.returncode == 0 else f"train_cnn1d returned {ret.returncode}"
         return acc, results_dir, err
     except Exception as e:
@@ -143,27 +145,42 @@ def run_single_combo(
 
 # ---------- Main ----------
 def main():
-    ap = argparse.ArgumentParser(description="Train 1D-CNN over all discovered combinations (sequential).")
-    ap.add_argument("--data-root", type=str, default=DEFAULT_DATA_ROOT,
-                    help="Dataset root (defaults to constants.directory)")
-    ap.add_argument("--index-dir", type=str, default=None,
-                    help=f"Split CSV folder (default: <data-root>/{INDEX_DIRNAME})")
-    ap.add_argument("--combos-file", type=str, default=None,
-                    help="Optional file with combos (one per line; first token used). Overrides discovery.")
-    ap.add_argument("--out-csv", type=str, default=str(REPO_ROOT / RESULTS_ROOT / "combos_accuracy.csv"),
-                    help="Where to write the summary CSV.")
-    # training defaults (mirroring train_cnn1d)
-    ap.add_argument("--sr", type=int, default=DEFAULT_SR)
-    ap.add_argument("--n-mfcc", type=int, default=DEFAULT_N_MFCC)
-    ap.add_argument("--duration", type=float, default=DEFAULT_DURATION)
-    ap.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
-    ap.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)
-    ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    ap = argparse.ArgumentParser(
+        description="Train 1D-CNN over all discovered combinations (sequential). "
+                    "Hyperparameters are taken from constants.py."
+    )
+    # No hyperparameter flags here. We only allow optional overrides for paths/files.
+    ap.add_argument("--data-root", type=str, required=False,
+                    help="Override dataset root (optional). Default is constants.directory.")
+    ap.add_argument("--index-dir", type=str, required=False,
+                    help=f"Override split CSV folder (optional). Default is <data-root>/{INDEX_DIRNAME}.")
+    ap.add_argument("--combos-file", type=str, required=False,
+                    help=f"Optional file with combos (one per line; first token used). "
+                         f"Default is <repo>/{TEMP_DIRNAME}/{BEST_COMBOS_TXT}.")
+    ap.add_argument("--out-csv", type=str, required=False,
+                    help=f"Summary CSV path. Default is <repo>/{RESULTS_ROOT}/"
+                         f"{SAVE_COMBOS_NAME if SAVE_COMBOS_NAME.lower().endswith('.csv') else SAVE_COMBOS_NAME.rsplit('.',1)[0] + '.csv'}")
     args = ap.parse_args()
 
-    data_root = Path(args.data_root).resolve()
+    # Resolve roots from constants (allow optional overrides)
+    data_root = Path(args.data_root).resolve() if args.data_root else Path(CFG_DATA_ROOT).resolve()
+
+    # Accept common alternative layouts as a convenience (same logic as train_cnn1d)
+    alt1 = (REPO_ROOT / "data/asvspoof2019").resolve()
+    alt2 = (REPO_ROOT / "database/data/asvspoof2019").resolve()
+    if not (data_root / INDEX_DIRNAME).exists():
+        if (alt1 / INDEX_DIRNAME).exists():
+            data_root = alt1
+        elif (alt2 / INDEX_DIRNAME).exists():
+            data_root = alt2
+
     index_dir = Path(args.index_dir).resolve() if args.index_dir else (data_root / INDEX_DIRNAME)
-    out_csv = Path(args.out_csv).resolve()
+
+    # Determine output CSV path from constants (allow optional override)
+    out_name = SAVE_COMBOS_NAME
+    if not out_name.lower().endswith(".csv"):
+        out_name = out_name.rsplit(".", 1)[0] + ".csv"
+    out_csv = Path(args.out_csv).resolve() if args.out_csv else (REPO_ROOT / RESULTS_ROOT / out_name)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
 
     # 1) discover combos
@@ -189,12 +206,6 @@ def main():
             combo_display=combo,
             data_root=data_root,
             index_dir=index_dir if index_dir.exists() else None,
-            sr=args.sr,
-            n_mfcc=args.n_mfcc,
-            duration=args.duration,
-            batch_size=args.batch_size,
-            epochs=args.epochs,
-            seed=args.seed,
         )
         row = {
             "combo": combo,

@@ -1,4 +1,3 @@
-#train_cnn1d.py
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os, sys, csv, argparse, warnings
@@ -26,29 +25,29 @@ warnings.filterwarnings("ignore", category=UserWarning)
 import tensorflow as tf
 from tensorflow.keras import layers as L, models, callbacks
 
-# --- Import ALL defaults from constants.py (single source of truth) ---
+# --- Import ALL config from constants.py (single source of truth) ---
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from constants import (
     # paths/folders
-    directory as DEFAULT_DATA_ROOT,
+    directory as CFG_DATA_ROOT,
     index_folder_name as INDEX_DIRNAME,
     results_folder as RESULTS_ROOT,
     # core data/sampling
-    sampling_rate as DEFAULT_SR,
-    random_state as DEFAULT_SEED,
+    sampling_rate as SR,
+    random_state as SEED,
     # run naming
     cnn1d_default_combo_name as DEFAULT_COMBO_NAME,
     # model/training defaults
-    cnn1d_n_mfcc as DEFAULT_N_MFCC,
-    cnn1d_duration_seconds as DEFAULT_DURATION,
-    cnn1d_batch_size as DEFAULT_BATCH_SIZE,
-    cnn1d_epochs as DEFAULT_EPOCHS,
-    cnn1d_dropout1 as DEFAULT_DROPOUT1,
-    cnn1d_dropout2 as DEFAULT_DROPOUT2,
-    cnn1d_optimizer_lr as DEFAULT_LR,
+    cnn1d_n_mfcc as N_MFCC,
+    cnn1d_duration_seconds as DURATION_S,
+    cnn1d_batch_size as BATCH_SIZE,
+    cnn1d_epochs as EPOCHS,
+    cnn1d_dropout1 as DROPOUT1,
+    cnn1d_dropout2 as DROPOUT2,
+    cnn1d_optimizer_lr as LR,
     # callback settings
     cb_model_checkpoint_monitor as CB_CKPT_MON,
     cb_early_stopping_monitor as CB_ES_MON,
@@ -137,7 +136,7 @@ def to_xy(items, data_root, sr, n_mfcc, n_fft, hop, win, T):
     y = np.array(y, dtype="int64")
     return X, y, paths
 
-def build_model(input_shape, d1=DEFAULT_DROPOUT1, d2=DEFAULT_DROPOUT2, lr=DEFAULT_LR):
+def build_model(input_shape, d1=DROPOUT1, d2=DROPOUT2, lr=LR):
     inp = L.Input(shape=input_shape)
     x = L.Conv1D(256, 3, padding="same", activation="relu")(inp)
     x = L.Conv1D(128, 3, padding="same", activation="relu")(x)
@@ -168,26 +167,20 @@ def load_split(index_dir: Path):
 
 # --- training ---
 def main():
-    ap = argparse.ArgumentParser(description="ASVspoof LA – CNN 1D (MFCC) with constants-configured defaults")
-    ap.add_argument("--data-root",  type=str, default=DEFAULT_DATA_ROOT, help="Dataset root (default from constants.directory)")
-    ap.add_argument("--index-dir",  type=str, default=None, help=f"Split CSV folder (default: <data-root>/{INDEX_DIRNAME})")
-    ap.add_argument("--combo-name", type=str, default=DEFAULT_COMBO_NAME, help="Run name / combo tag")
-    ap.add_argument("--sr",         type=int, default=DEFAULT_SR)
-    ap.add_argument("--n-mfcc",     type=int, default=DEFAULT_N_MFCC)
-    ap.add_argument("--duration",   type=float, default=DEFAULT_DURATION)
-    ap.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
-    ap.add_argument("--epochs",     type=int, default=DEFAULT_EPOCHS)
-    ap.add_argument("--seed",       type=int, default=DEFAULT_SEED)
+    ap = argparse.ArgumentParser(description="ASVspoof LA – CNN 1D (MFCC) driven entirely by constants.py")
+    ap.add_argument("--data-root",  type=str, required=False, help="Override dataset root (optional)")
+    ap.add_argument("--index-dir",  type=str, required=False, help="Override index dir (optional)")
+    ap.add_argument("--combo-name", type=str, required=False, help="Override run tag (optional)")
     args = ap.parse_args()
 
-    np.random.seed(args.seed)
-    tf.random.set_seed(args.seed)
+    np.random.seed(SEED)
+    tf.random.set_seed(SEED)
 
-    # Normalize dataset root; accept several common layouts
-    root = Path(args.data_root).resolve()
+    root_cfg = Path(CFG_DATA_ROOT).resolve()
+    root = Path(args.data_root).resolve() if args.data_root else root_cfg
+
     alt1 = (REPO_ROOT / "data/asvspoof2019").resolve()
     alt2 = (REPO_ROOT / "database/data/asvspoof2019").resolve()
-
     if not (root / INDEX_DIRNAME).exists():
         if (alt1 / INDEX_DIRNAME).exists():
             root = alt1
@@ -197,35 +190,35 @@ def main():
     index_dir = Path(args.index_dir).resolve() if args.index_dir else (root / INDEX_DIRNAME)
     if not (index_dir / "train.csv").exists():
         msg = (f"[!] Missing {index_dir/'train.csv'}.\n"
-               f"    Current --data-root: {root}\n"
-               f"    Suggestions:\n"
-               f"      export ASVSPOOF_ROOT='{alt1}'  # if CSVs are in data/asvspoof2019/index\n"
-               f"      or run: python scripts/make_index_from_protocols.py --data-root '{root}'")
+               f"    Current data root: {root}\n"
+               f"    Try: python scripts/make_index_from_protocols.py --data-root '{root}'")
         print(msg); sys.exit(2)
 
-    # MFCC frame params derived from sampling rate
-    n_fft = int(0.025 * args.sr)
+    combo_name = args.combo_name if args.combo_name else DEFAULT_COMBO_NAME
+
+    # MFCC frame params derived from constants.SR and constants.DURATION_S
+    n_fft = int(0.025 * SR)
     win   = n_fft
-    hop   = int(0.010 * args.sr)
-    T     = int(args.duration * args.sr / hop)
+    hop   = int(0.010 * SR)
+    T     = int(DURATION_S * SR / hop)
 
     # Load splits
     train, val, test = load_split(index_dir)
     if not val or not test:
-        Xtmp, ytmp, _ = to_xy(train, root, args.sr, args.n_mfcc, n_fft, hop, win, T)
+        Xtmp, ytmp, _ = to_xy(train, root, SR, N_MFCC, n_fft, hop, win, T)
         if len(Xtmp) == 0:
             print("[!] Could not load any data. Check your CSVs/paths."); sys.exit(2)
-        Xtr, Xte, ytr, yte = train_test_split(Xtmp, ytmp, test_size=0.2, random_state=args.seed, stratify=ytmp)
-        Xtr, Xva, ytr, yva = train_test_split(Xtr, ytr, test_size=0.1, random_state=args.seed, stratify=ytr)
+        Xtr, Xte, ytr, yte = train_test_split(Xtmp, ytmp, test_size=0.2, random_state=SEED, stratify=ytmp)
+        Xtr, Xva, ytr, yva = train_test_split(Xtr, ytr, test_size=0.1, random_state=SEED, stratify=ytr)
         test_paths = [""] * len(yte)
     else:
-        Xtr, ytr, _ = to_xy(train, root, args.sr, args.n_mfcc, n_fft, hop, win, T)
-        Xva, yva, _ = to_xy(val,   root, args.sr, args.n_mfcc, n_fft, hop, win, T) if val else (np.empty((0, T, args.n_mfcc), 'float32'), np.empty((0,), 'int64'), [])
-        Xte, yte, test_paths = to_xy(test, root, args.sr, args.n_mfcc, n_fft, hop, win, T)
+        Xtr, ytr, _ = to_xy(train, root, SR, N_MFCC, n_fft, hop, win, T)
+        Xva, yva, _ = to_xy(val,   root, SR, N_MFCC, n_fft, hop, win, T) if val else (np.empty((0, T, N_MFCC), 'float32'), np.empty((0,), 'int64'), [])
+        Xte, yte, test_paths = to_xy(test, root, SR, N_MFCC, n_fft, hop, win, T)
 
     model = build_model((Xtr.shape[1], Xtr.shape[2]))
 
-    results_dir = (REPO_ROOT / RESULTS_ROOT / args.combo_name).resolve()
+    results_dir = (REPO_ROOT / RESULTS_ROOT / combo_name).resolve()
     ensure_dir(results_dir)
 
     cbs = [
@@ -247,7 +240,7 @@ def main():
     hist = model.fit(
         Xtr, ytr,
         validation_data=(Xva, yva) if len(yva) else None,
-        epochs=args.epochs, batch_size=args.batch_size, verbose=1, callbacks=cbs
+        epochs=EPOCHS, batch_size=BATCH_SIZE, verbose=1, callbacks=cbs
     )
 
     # Plots
@@ -255,7 +248,7 @@ def main():
     plot_history(hist, results_dir)
 
     # Evaluation on test
-    yprob = model.predict(Xte, batch_size=args.batch_size).ravel() if len(Xte) else np.array([])
+    yprob = model.predict(Xte, batch_size=BATCH_SIZE).ravel() if len(Xte) else np.array([])
     ypred = (yprob >= 0.5).astype(int) if len(yprob) else np.array([])
 
     if len(yte):
