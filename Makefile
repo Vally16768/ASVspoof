@@ -33,7 +33,14 @@ check_la:
 check_scripts:
 > set -euo pipefail
 > test -f "asvspoof_features_pipeline.py" || { echo "[!] Lipsește asvspoof_features_pipeline.py în rădăcină"; exit 1; }
-> test -f "scripts/train_all_combos.py"    || { echo "[!] Lipsește scripts/train_all_combos.py (mută-l în scripts/)"; exit 1; }
+> test -f "scripts/make_index.py"                || { echo "[!] Lipsește scripts/make_index.py"; exit 1; }
+> test -f "scripts/extract_features_seq.py"      || { echo "[!] Lipsește scripts/extract_features_seq.py"; exit 1; }
+> test -f "scripts/pack_features.py"             || { echo "[!] Lipsește scripts/pack_features.py"; exit 1; }
+> test -f "scripts/extract_tabular_features.py"  || { echo "[!] Lipsește scripts/extract_tabular_features.py"; exit 1; }
+> test -f "scripts/exhaustive_search.py"         || { echo "[!] Lipsește scripts/exhaustive_search.py"; exit 1; }
+> test -f "scripts/train_all_combos.py"          || { echo "[!] Lipsește scripts/train_all_combos.py"; exit 1; }
+> test -f "update_combinations.py"               || { echo "[!] Lipsește update_combinations.py"; exit 1; }
+> test -f "main.py"                              || { echo "[!] Lipsește main.py"; exit 1; }
 > echo "[✓] Scripturile există"
 
 check_combos_dir:
@@ -46,6 +53,7 @@ check_combos_dir:
 help:
 > echo "Targets:"
 > echo "  check_la            - verifică structura ASVspoof LA"
+> echo "  check_scripts       - verifică existența scripturilor necesare"
 > echo "  index               - face CSV-uri train/dev (etichete), ignoră eval"
 > echo "  features_seq        - extrage features frame-wise în features/seq/{train,dev}"
 > echo "  pack                - pad/trunc -> $(PACKED_DIR)/X_*.npy, y_*.npy"
@@ -57,17 +65,19 @@ help:
 > echo "  clean               - șterge features/seq și temp_data"
 > echo "  extract             - extrage toate feature-urile + splits + parquet/csv"
 > echo "  combos_all          - materializează TOATE combinațiile (NPZ train/val/test)"
-> echo "  combos_codes CODES='AB M AEMNO' - doar anumite combinații"
+> echo "  combos_codes        - doar anumite combinații (setează CODES='AB M AEMNO')"
 > echo "  train_all_combos    - antrenează pe toate combinațiile materializate"
 > echo "  top_results         - top 20 după accuracy din results/combos_accuracy.csv"
 > echo "  nohup_extract       - rulează extract cu nohup, log în logs/"
 > echo "  nohup_combos_all    - rulează combos_all cu nohup, log în logs/"
 > echo "  nohup_train_all     - rulează train_all_combos cu nohup, log în logs/"
+> echo "  combos              - alias compatibil cu README: make combos codes='AB AEMNO M'"
+> echo "  clean_combos        - șterge doar $(INDEX_DIR)/combos"
 
 # ----- Pipeline index + features_seq + pack -----
 .PHONY: index features_seq pack dataset train features_tabular search results clean
 
-index: check_la
+index: check_la check_scripts
 > $(PY) scripts/make_index.py --root "$(DATA_ROOT)" --out "$(INDEX_DIR)" --splits train dev
 > ls -lh "$(INDEX_DIR)"/train.csv "$(INDEX_DIR)"/val.csv
 
@@ -78,19 +88,24 @@ features_seq: index
 > $(PY) scripts/extract_features_seq.py --root "$(DATA_ROOT)" --csv "$(INDEX_DIR)/val.csv"   --outdir "$(FEAT_SEQ_DIR)"
 
 pack: features_seq
+> set -euo pipefail
+> mkdir -p "$(PACKED_DIR)"
 > $(PY) scripts/pack_features.py --features_root "$(FEAT_SEQ_DIR)" --splits train dev --outdir "$(PACKED_DIR)" --frames 400
 
 dataset: pack
 > echo "[✓] Dataset pregătit în $(PACKED_DIR)"
 
-train:
+train: check_scripts
 > $(PY) main.py
 
-features_tabular:
+features_tabular: pack
+> set -euo pipefail
+> mkdir -p "$(TEMP_DIR)"
 > $(PY) scripts/extract_tabular_features.py --extracted_dir "$(PACKED_DIR)" --split train --out_csv $(TEMP_DIR)/train_tabular.csv
 > $(PY) scripts/extract_tabular_features.py --extracted_dir "$(PACKED_DIR)" --split val   --out_csv $(TEMP_DIR)/val_tabular.csv
 
-search:
+search: features_tabular
+> set -euo pipefail
 > $(PY) scripts/exhaustive_search.py --csv $(TEMP_DIR)/train_tabular.csv --out_txt $(TEMP_DIR)/combinations_accuracy.txt
 > $(PY) update_combinations.py
 
