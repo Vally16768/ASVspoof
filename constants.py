@@ -7,8 +7,8 @@ directory = os.getenv("ASVSPOOF_ROOT", "dataset")
 # === Setări dataset/split ===
 sampling_rate   = 16000
 random_state    = 42
-test_size       = 0.20     # pentru split train/test (dacă e folosit)
-validation_size = 0.20     # procent din train -> val (dacă e folosit)
+test_size       = 0.15     # pentru split train/test (dacă e folosit)
+validation_size = 0.15     # procent din train -> val (dacă e folosit)
 
 # === Foldere/fișiere și denumiri ===
 results_folder                          = "results"
