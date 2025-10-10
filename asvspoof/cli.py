@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-# === cli.py (minimal; uses existing indices only) ===
+# === cli.py (strict: uses existing indices; fail fast on errors) ===
 from __future__ import annotations
+
 import argparse
+import os
 from pathlib import Path
 import pandas as pd
 
@@ -13,27 +15,57 @@ from .io_utils import write_features_tables
 from .combos import materialize_combos, all_combo_codes, normalize_codes_to_sorted_unique
 
 
+def _verify_all_paths_exist(df_index: pd.DataFrame) -> None:
+    """Abort immediately if any file is missing; print a short sample."""
+    missing_mask = ~df_index["abs_path"].map(lambda p: Path(p).exists())
+    missing_count = int(missing_mask.sum())
+    if missing_count:
+        sample = df_index.loc[missing_mask, "abs_path"].head(10).tolist()
+        raise SystemExit(
+            "[!] Some indexed audio files do not exist on disk.\n"
+            f"    Missing: {missing_count} / {len(df_index)}\n"
+            "    First examples:\n      - " + "\n      - ".join(map(str, sample))
+        )
+
+
+def _resolve_workers(arg_workers: int | None) -> int:
+    """CLI > constants.workers > sensible default."""
+    if arg_workers is not None:
+        return int(arg_workers)
+    if hasattr(C, "workers"):
+        try:
+            return int(getattr(C, "workers"))
+        except Exception:
+            pass
+    return max(1, (os.cpu_count() or 4) // 2)
+
+
 def _cmd_extract(args) -> None:
     data_root = Path(args.data_root or C.directory).resolve()
-    out_dir = Path(args.out_dir) if args.out_dir else (data_root / C.index_folder_name)
+    out_dir = Path(args.out_dir).resolve() if args.out_dir else (data_root / C.index_folder_name)
 
-    cfg = ExtractConfig(data_root=data_root, out_dir=out_dir)
+    cfg = ExtractConfig(
+        data_root=data_root,
+        out_dir=out_dir,
+        workers=_resolve_workers(args.workers),
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("[1/3] Loading existing indices (train/val/test/eval)...")
+    # Signature: (data_root, index_dirname)
     df_index = load_existing_indices(cfg.data_root, C.index_folder_name)
 
-    # sanity: only keep rows that physically exist
-    from pathlib import Path as _P
-    df_index = df_index[df_index["abs_path"].map(lambda p: _P(p).exists())].reset_index(drop=True)
+    print("[1.1] Verifying all referenced files exist...")
+    _verify_all_paths_exist(df_index)
 
-    print("[2/3] Extracting features (workers=", cfg.workers, ") ...", sep="")
-    feat_df = extract_all_features(df_index, cfg)
+    print(f"[2/3] Extracting features strictly (workers={cfg.workers}) ...")
+    feat_df = extract_all_features(df_index, cfg)  # will raise immediately on any per-file error
 
     meta_cols = {"split", "file_id", "path", "label", "target"}
     feat_cols = [c for c in feat_df.columns if c not in meta_cols]
     if len(feat_cols) == 0:
-        raise SystemExit("No features extracted — check audio paths & dependencies.")
+        # This should be unreachable now; kept as belt-and-suspenders.
+        raise SystemExit("No features extracted — investigate extractor/deps.")
 
     print("[3/3] Writing Parquet + CSV to:", out_dir)
     write_features_tables(feat_df, out_dir)
@@ -42,7 +74,7 @@ def _cmd_extract(args) -> None:
 
 def _cmd_combos(args) -> None:
     data_root = Path(args.data_root or C.directory).resolve()
-    out_dir = Path(args.out_dir) if args.out_dir else (data_root / C.index_folder_name)
+    out_dir = Path(args.out_dir).resolve() if args.out_dir else (data_root / C.index_folder_name)
     parquet_path = out_dir / "features_all.parquet"
     if not parquet_path.exists():
         raise SystemExit(f"Parquet not found: {parquet_path}. Run 'extract' first.")
@@ -70,12 +102,16 @@ def _cmd_list(_args) -> None:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="ASVspoof LA — extract+combos (no new splits)")
+    p = argparse.ArgumentParser(description="ASVspoof LA — strict extract+combos (no new splits)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    pe = sub.add_parser("extract", help="Extract features using existing indices")
-    pe.add_argument("--data-root", type=str, default=C.directory)
-    pe.add_argument("--out-dir", type=str, default=None)
+    pe = sub.add_parser("extract", help="Extract features using existing indices (fail fast)")
+    pe.add_argument("--data-root", type=str, default=C.directory,
+                    help="Dataset root (defaults to constants.directory)")
+    pe.add_argument("--out-dir", type=str, default=None,
+                    help="Output dir (defaults to <data_root>/<index_folder_name>)")
+    pe.add_argument("--workers", type=int, default=None,
+                    help="0 = sequential (no multiprocessing), >=1 = ProcessPool size")
     pe.set_defaults(func=_cmd_extract)
 
     pc = sub.add_parser("combos", help="Materialize feature combos (train/val/test)")

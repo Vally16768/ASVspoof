@@ -32,15 +32,29 @@ make dataset           # verify dataset layout and unpack if needed
 make extract WORKERS=8 # choose workers according to your CPU
 ```
 
+Convert all flac files to wav. rename train test files.
+
+# Ubuntu/Debian
+sudo apt-get update && sudo apt-get install -y parallel
+# then
+find . -type f -name '*.wav' -print0 \
+| parallel -0 -j 16 --will-cite '
+    ffmpeg -nostdin -hide_banner -loglevel error -y -i "{}" -ac 1 -ar 16000 "{.}.wav"
+'
+
+find ASVspoof/database/data/asvspoof2019 -type f -name '*.wav' -delete
+
 Expected final layout (relative to repo root):
 
 ```
 database/data/asvspoof2019/
-  ASVspoof2019_LA_train/flac/*.flac
-  ASVspoof2019_LA_dev/flac/*.flac
-  ASVspoof2019_LA_eval/flac/*.flac
+  ASVspoof2019_LA_train/flac/*.wav
+  ASVspoof2019_LA_dev/flac/*.wav
+  ASVspoof2019_LA_eval/flac/*.wav
   ASVspoof2019_LA_cm_protocols/*.txt
 ```
+
+
 
 ## Steps & targets
 

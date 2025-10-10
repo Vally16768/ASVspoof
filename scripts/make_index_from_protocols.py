@@ -122,7 +122,7 @@ def map_rows(root: Path, base_rel: str, pairs: Iterable[Tuple[str, str]]) -> Lis
     base = root / base_rel
     rows: List[Tuple[str, str]] = []
     for fid, key in pairs:
-        rel = (base / f"{fid}.flac").relative_to(root)
+        rel = (base / f"{fid}.wav").relative_to(root)
         rows.append((str(rel), key))
     return rows
 
@@ -208,11 +208,11 @@ def main() -> None:
     base_eval = DATA_ROOT / LA_EVAL_FLAC_SUBDIR
     if eval_trl.exists():
         fids = read_any_fids(eval_trl)
-        eval_paths = [str((base_eval / f"{fid}.flac").relative_to(DATA_ROOT)) for fid in fids]
+        eval_paths = [str((base_eval / f"{fid}.wav").relative_to(DATA_ROOT)) for fid in fids]
     else:
         if not base_eval.exists():
             raise SystemExit(f"[!] Eval FLAC dir not found: {base_eval}")
-        eval_paths = [str(p.relative_to(DATA_ROOT)) for p in sorted(base_eval.glob("*.flac"))]
+        eval_paths = [str(p.relative_to(DATA_ROOT)) for p in sorted(base_eval.glob("*.wav"))]
 
     # Write outputs under <data-root>/<INDEX_DIRNAME>
     idx = DATA_ROOT / INDEX_DIRNAME
