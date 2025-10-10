@@ -1,9 +1,9 @@
-# === combos.py (materialize combos per existing split; no cv_split) ===
+# asvspoof/combos.py — combos pe litere, cu completare pentru grupuri lipsă
 from __future__ import annotations
 import itertools
 import json
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple, Optional
+from typing import Dict, Iterable, List, Tuple, Optional, Set
 
 import numpy as np
 import pandas as pd
@@ -11,14 +11,67 @@ import pandas as pd
 from .config import FEATURES_LIST, FEATURE_NAME_MAPPING, FEATURE_NAME_REVERSE_MAPPING
 
 META_COLS = {"split", "file_id", "path", "label", "target"}
+_DEFAULT_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def _norm_group(name: str) -> str:
+    return str(name).strip().lower()
+
+
+def _effective_letter_maps() -> tuple[Dict[str, str], Dict[str, str]]:
+    """
+    Returnează (forward, reverse) complete:
+      forward: group -> letter  (ex: 'mfcc' -> 'A')
+      reverse: letter -> group  (ex: 'A' -> 'mfcc')
+
+    - Folosește FEATURE_NAME_REVERSE_MAPPING dacă există, dar **completează**
+      automat grupurile lipsă din FEATURES_LIST cu litere nefolosite.
+    - Toate numele de grup sunt normalizate la lowercase.
+    """
+    feats = [_norm_group(g) for g in FEATURES_LIST]
+    if len(feats) > len(_DEFAULT_LETTERS):
+        raise ValueError(
+            f"Prea multe grupuri ({len(feats)}) pentru maparea A..Z. "
+            f"Reduceți grupurile sau extindeți alfabetul."
+        )
+
+    # 1) Construim forward parțial din mapping-ul userului (dacă există)
+    forward: Dict[str, str] = {}
+    used_letters: Set[str] = set()
+
+    if isinstance(FEATURE_NAME_REVERSE_MAPPING, dict) and FEATURE_NAME_REVERSE_MAPPING:
+        for raw_letter, raw_group in FEATURE_NAME_REVERSE_MAPPING.items():
+            L = str(raw_letter).strip().upper()
+            if len(L) != 1 or L not in _DEFAULT_LETTERS:
+                continue  # ignorăm litere invalide
+            g = _norm_group(raw_group)
+            forward[g] = L
+            used_letters.add(L)
+
+    # 2) Completăm grupurile lipsă cu litere disponibile
+    available_letters = [L for L in _DEFAULT_LETTERS if L not in used_letters]
+    missing = [g for g in feats if g not in forward]
+    if len(missing) > len(available_letters):
+        raise ValueError(
+            "Nu mai sunt litere disponibile pentru a mapa toate grupurile lipsă."
+        )
+    for g, L in zip(missing, available_letters):
+        forward[g] = L
+        used_letters.add(L)
+
+    # 3) Reconstruim reverse complet din forward
+    reverse: Dict[str, str] = {L: g for g, L in forward.items()}
+    return forward, reverse
 
 
 def group_columns_from_df(df: pd.DataFrame) -> Dict[str, List[str]]:
-    groups: Dict[str, List[str]] = {g: [] for g in FEATURES_LIST}
+    # Grupurile sunt detectate după prefix <group>_*
+    feats = [_norm_group(g) for g in FEATURES_LIST]
+    groups: Dict[str, List[str]] = {g: [] for g in feats}
     for col in df.columns:
         if col in META_COLS:
             continue
-        for g in FEATURES_LIST:
+        for g in feats:
             if col == g or col.startswith(g + "_"):
                 groups[g].append(col)
                 break
@@ -28,22 +81,34 @@ def group_columns_from_df(df: pd.DataFrame) -> Dict[str, List[str]]:
 
 
 def all_combo_codes() -> List[str]:
-    letters = [FEATURE_NAME_MAPPING[g] for g in FEATURES_LIST]
+    forward, _ = _effective_letter_maps()
+    # Respectăm ordinea grupurilor din FEATURES_LIST
+    letters = [forward[_norm_group(g)] for g in FEATURES_LIST]
     codes: List[str] = []
     for r in range(1, len(letters) + 1):
         for combo in itertools.combinations(letters, r):
-            codes.append("".join(sorted(combo)))
+            codes.append("".join(combo))
     return codes
 
 
 def normalize_codes_to_sorted_unique(codes: Iterable[str]) -> List[str]:
-    return sorted(set("".join(sorted(c.strip().upper())) for c in codes if c.strip()))
+    _, reverse = _effective_letter_maps()
+    allowed: Set[str] = set(reverse.keys())
+    normed: Set[str] = set()
+    for raw in codes:
+        s = "".join(sorted(ch.upper() for ch in str(raw) if ch.strip()))
+        if s and set(s).issubset(allowed):
+            normed.add(s)
+    return sorted(normed)
 
 
 def columns_for_code(code: str, group_cols: Dict[str, List[str]]) -> List[str]:
+    _, reverse = _effective_letter_maps()
     cols: List[str] = []
     for ch in code:
-        g = FEATURE_NAME_REVERSE_MAPPING[ch]
+        if ch not in reverse:
+            raise KeyError(f"Unknown feature letter '{ch}' in code '{code}'")
+        g = reverse[ch]
         cols.extend(group_cols.get(g, []))
     return cols
 
@@ -63,11 +128,14 @@ def materialize_combos(feat_df: pd.DataFrame, out_dir: Path, codes: List[str]) -
     out_dir = Path(out_dir)
     meta_path = out_dir / "combos_meta.json"
 
+    forward, reverse = _effective_letter_maps()
     group_cols = group_columns_from_df(feat_df)
+
     meta = {
-        "features_list": FEATURES_LIST,
+        "features_list": [_norm_group(g) for g in FEATURES_LIST],
         "feature_name_mapping": FEATURE_NAME_MAPPING,
-        "feature_name_reverse_mapping": FEATURE_NAME_REVERSE_MAPPING,
+        "feature_letter_map": forward,                 # group -> letter
+        "feature_letter_reverse_map": reverse,         # letter -> group
         "groups_to_columns": group_cols,
         "num_rows": int(len(feat_df)),
     }
@@ -81,7 +149,7 @@ def materialize_combos(feat_df: pd.DataFrame, out_dir: Path, codes: List[str]) -
     y_all = df_lab["target"].astype("int16").to_numpy()
     col_to_pos = {c: i for i, c in enumerate(base_cols)}
 
-    def slice_for(code: str):
+    def slice_for(code: str) -> tuple[List[str], List[int]]:
         cols = columns_for_code(code, group_cols)
         pos = [col_to_pos[c] for c in cols]
         return cols, pos
@@ -89,7 +157,11 @@ def materialize_combos(feat_df: pd.DataFrame, out_dir: Path, codes: List[str]) -
     try:
         from tqdm import tqdm
     except Exception:
-        tqdm = lambda x, **k: x
+        tqdm = lambda x, **k: x  # type: ignore
+
+    codes = normalize_codes_to_sorted_unique(codes)
+    if not codes:
+        raise SystemExit("No valid combo codes after normalization (check your letters).")
 
     for code in tqdm(codes, desc="Combos"):
         cols, pos = slice_for(code)
