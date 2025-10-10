@@ -1,17 +1,66 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+
+"""
+Train a tabular MLP on a materialized feature combination (NPZ).
+
+This version:
+- Reliably imports `constants.py` by walking up from this file until it finds it,
+  then adds that directory to sys.path BEFORE importing.
+- Leaves the training/eval logic unchanged otherwise.
+"""
+
 import argparse
-from pathlib import Path
 import json
+import sys
+from pathlib import Path
 
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers as L, callbacks, models
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, roc_auc_score
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    accuracy_score,
+    roc_auc_score,
+)
+
+# ---------------------------------------------------------------------
+# Locate repo root so we can import `constants.py` no matter where we run from
+# ---------------------------------------------------------------------
+def _locate_repo_root(start: Path, marker: str = "constants.py", max_up: int = 6) -> Path | None:
+    """Walk upward from `start` for up to `max_up` levels looking for `marker`."""
+    cur = start.resolve()
+    for _ in range(max_up):
+        candidate = cur / marker
+        if candidate.exists():
+            return cur
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    # Also try CWD (useful when launching via `python scripts/train_cnn1d.py` from repo root)
+    cwd_candidate = Path.cwd() / marker
+    if cwd_candidate.exists():
+        return Path.cwd().resolve()
+    return None
+
+HERE = Path(__file__).resolve().parent
+_repo_root = _locate_repo_root(HERE)
+if _repo_root is None:
+    raise SystemExit(
+        "[!] Could not find 'constants.py' by walking up from scripts/.\n"
+        "    Make sure 'constants.py' is at the repo root.\n"
+        "    Options:\n"
+        "      - Run from the repo root:  PYTHONPATH=\"$PWD\" python scripts/train_cnn1d.py --code A\n"
+        "      - Or set PYTHONPATH to the repo root.\n"
+    )
+
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
 
 # ---- Project constants (single source of truth) ----
-import constants as C
+import constants as C  # noqa: E402  (import after path fix)
 
 # ---------- IO helpers ----------
 def npz_path(index_dir: Path, split: str, code: str) -> Path:
@@ -60,7 +109,7 @@ def main():
         "--code", "-c",
         type=str,
         required=True,
-        help="Combo code (e.g., A, AB, AEM, ...)."
+        help="Combo code (e.g., A, AB, AEM, ...).",
     )
     args = ap.parse_args()
     code = args.code.upper()
@@ -70,9 +119,9 @@ def main():
     tf.random.set_seed(rng)
     np.random.seed(rng)
 
-    data_root   = Path(getattr(C, "directory")).resolve()
-    index_dir   = data_root / getattr(C, "index_folder_name", "index")
-    results_root= Path(getattr(C, "results_folder", "results")).resolve()
+    data_root    = Path(getattr(C, "directory")).resolve()
+    index_dir    = data_root / getattr(C, "index_folder_name", "index")
+    results_root = Path(getattr(C, "results_folder", "results")).resolve()
 
     # Hyperparameters (prefer MLP-specific if present; otherwise reuse cnn1d ones)
     epochs     = int(getattr(C, "mlp_epochs", getattr(C, "cnn1d_epochs", 100)))
@@ -163,8 +212,8 @@ def main():
         fig = plt.figure(figsize=(4, 4), dpi=120)
         plt.imshow(cm, interpolation="nearest")
         plt.title(f"Confusion Matrix — {code_read}")
-        plt.xticks([0,1], ["spoof","bonafide"])
-        plt.yticks([0,1], ["spoof","bonafide"])
+        plt.xticks([0, 1], ["spoof", "bonafide"])
+        plt.yticks([0, 1], ["spoof", "bonafide"])
         for (i, j), v in np.ndenumerate(cm):
             plt.text(j, i, str(v), ha="center", va="center")
         plt.tight_layout()
@@ -174,9 +223,14 @@ def main():
         pass
 
     # Predictions CSV (labels + proba)
-    np.savetxt(results_dir / fname_preds,
-               np.c_[prob_te, ypred, yte],
-               delimiter=",", header="prob_bonafide,pred,label", comments="", fmt="%.6f")
+    np.savetxt(
+        results_dir / fname_preds,
+        np.c_[prob_te, ypred, yte],
+        delimiter=",",
+        header="prob_bonafide,pred,label",
+        comments="",
+        fmt="%.6f",
+    )
 
     # Save final model
     model.save(results_dir / fname_final)
@@ -194,6 +248,7 @@ def main():
         "data_root": str(data_root),
         "index_dir": str(index_dir),
         "results_dir": str(results_dir),
+        "repo_root": str(_repo_root),
     }
     (results_dir / "run_meta.json").write_text(json.dumps(meta, indent=2))
     print(f"[✓] Saved artifacts to: {results_dir}")

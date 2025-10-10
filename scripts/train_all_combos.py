@@ -10,40 +10,59 @@ Train all available combinations by delegating to train_cnn1d.py.
 - Calls:  python train_cnn1d.py --code <CODE>
 - Writes a summary CSV to <repo>/<results_folder>/<save_combinations_file_name|.csv>
 """
-
 from __future__ import annotations
+
 import sys
 import subprocess
 from pathlib import Path
 import pandas as pd
 import numpy as np
+from typing import List
 
-# ---------- Repo root & sys.path ----------
+# ---------- Locate repo root & add to sys.path ----------
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE
+REPO_ROOT = HERE.parent  # go one level up (to project root)
+
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+if str(REPO_ROOT / "asvspoof") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "asvspoof"))
 
-# ---------- Constants ----------
-from constants import (
-    directory as CFG_DATA_ROOT,
-    index_folder_name as INDEX_DIRNAME,
-    results_folder as RESULTS_ROOT,
-    temp_data_folder_name as TEMP_DIRNAME,
-    accuracy_txt_filename as ACC_TXT_NAME,
-    final_model_filename as FINAL_MODEL_NAME,
-    best_model_filename as BEST_MODEL_NAME,
-    save_the_best_combination_file_name as BEST_COMBOS_TXT,
-    save_combinations_file_name as SAVE_COMBOS_NAME,
-    cnn1d_default_combo_name as DEFAULT_COMBO,
-)
-
-# ---------- Combos normalizer ----------
+# ---------- Constants import (robust) ----------
 try:
-    from combos import normalize_codes_to_sorted_unique
+    # Preferred: package layout
+    from asvspoof.constants import (
+        directory as CFG_DATA_ROOT,
+        index_folder_name as INDEX_DIRNAME,
+        results_folder as RESULTS_ROOT,
+        temp_data_folder_name as TEMP_DIRNAME,
+        accuracy_txt_filename as ACC_TXT_NAME,
+        final_model_filename as FINAL_MODEL_NAME,
+        best_model_filename as BEST_MODEL_NAME,
+        save_the_best_combination_file_name as BEST_COMBOS_TXT,
+        save_combinations_file_name as SAVE_COMBOS_NAME,
+        cnn1d_default_combo_name as DEFAULT_COMBO,
+    )
 except Exception:
-    # If used inside a package layout
-    from .combos import normalize_codes_to_sorted_unique  # type: ignore
+    # Fallback: flat layout
+    from constants import (  # type: ignore
+        directory as CFG_DATA_ROOT,
+        index_folder_name as INDEX_DIRNAME,
+        results_folder as RESULTS_ROOT,
+        temp_data_folder_name as TEMP_DIRNAME,
+        accuracy_txt_filename as ACC_TXT_NAME,
+        final_model_filename as FINAL_MODEL_NAME,
+        best_model_filename as BEST_MODEL_NAME,
+        save_the_best_combination_file_name as BEST_COMBOS_TXT,
+        save_combinations_file_name as SAVE_COMBOS_NAME,
+        cnn1d_default_combo_name as DEFAULT_COMBO,
+    )
+
+# ---------- Combos normalizer (robust) ----------
+try:
+    from asvspoof.combos import normalize_codes_to_sorted_unique
+except Exception:
+    from combos import normalize_codes_to_sorted_unique  # type: ignore
 
 # ---------- Helpers ----------
 def _train_script_path() -> Path:
@@ -61,14 +80,14 @@ def _npz_path(index_dir: Path, split: str, code: str) -> Path:
 def npz_triple_exists(index_dir: Path, code: str) -> bool:
     return all(_npz_path(index_dir, sp, code).exists() for sp in ("train", "val", "test"))
 
-def read_combos_from_npz(index_dir: Path) -> list[str]:
+def read_combos_from_npz(index_dir: Path) -> List[str]:
     combos_dir = index_dir / "combos" / "train"
     if not combos_dir.exists():
         return []
     stems = sorted(p.stem for p in combos_dir.glob("*.npz"))
     return normalize_codes_to_sorted_unique(stems)
 
-def read_combos_from_txt(txt_path: Path) -> list[str]:
+def read_combos_from_txt(txt_path: Path) -> List[str]:
     if not txt_path.exists():
         return []
     raw = []
@@ -79,7 +98,7 @@ def read_combos_from_txt(txt_path: Path) -> list[str]:
         raw.append(s.split()[0])  # first token (accepts "A+B", "AB", etc.)
     return normalize_codes_to_sorted_unique(raw)
 
-def find_available_combos(data_root: Path) -> list[str]:
+def find_available_combos(data_root: Path) -> List[str]:
     index_dir = data_root / INDEX_DIRNAME
     combos = read_combos_from_npz(index_dir)
     if combos:
@@ -114,7 +133,7 @@ def main():
     print("\n=== Discovered combinations (normalized codes) ===")
     for c in combos:
         print(" -", c)
-    print(f"Total: {len(combos)}\n")
+    print("Total:", len(combos), "\n")
 
     train_script = _train_script_path()
     rows = []
@@ -143,15 +162,19 @@ def main():
             "combo": code,
             "results_dir": str(rdir),
             "accuracy": acc,
-            "best_model": str(rdir / BEST_MODEL_NAME),
-            "final_model": str(rdir / FINAL_MODEL_NAME),
+            "best_model": str(rdir / getattr(sys.modules.get('asvspoof.constants', None) or __import__('constants'), 'best_model_filename', 'best_model.keras')),
+            "final_model": str(rdir / getattr(sys.modules.get('asvspoof.constants', None) or __import__('constants'), 'final_model_filename', 'final_model.keras')),
             "error": ("" if err is None else err),
         })
 
         # Persist progressive summary
-        pd.DataFrame(rows).to_csv(out_csv, index=False)
+        df = pd.DataFrame(rows)
+        # Pretty accuracy string
+        df["accuracy_disp"] = df["accuracy"].apply(lambda v: "NA" if (isinstance(v, float) and np.isnan(v)) else f"{float(v):.4f}")
+        df.to_csv(out_csv, index=False)
         status = "OK" if err is None else f"ERR: {err}"
-        print(f" -> {status}; accuracy={('NA' if np.isnan(acc) else acc):s}; saved to {out_csv}\n")
+        acc_disp = "NA" if np.isnan(acc) else f"{acc:.4f}"
+        print(f" -> {status}; accuracy={acc_disp}; saved to {out_csv}\n")
 
     print(f"[✓] Done. Summary at: {out_csv}")
 
