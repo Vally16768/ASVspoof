@@ -112,7 +112,7 @@ FEATURE_NAME_MAPPING = {
 
 
 # ---------------------------
-# ExtractConfig — STRICT secvențial (fără workers)
+# ExtractConfig — STRICT secvențial 
 # ---------------------------
 @dataclass(frozen=True)
 class ExtractConfig:

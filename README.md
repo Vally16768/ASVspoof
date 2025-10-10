@@ -29,7 +29,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 make dataset           # verify dataset layout and unpack if needed
-make extract WORKERS=8 # choose workers according to your CPU
+make extract
 ```
 
 Convert all flac files to wav. rename train test files.

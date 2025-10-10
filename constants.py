@@ -6,7 +6,6 @@ directory = "database/data/asvspoof2019"
 sampling_rate   = 16000
 random_state    = 42
 test_size       = 0.20   
-workers         = 8      # for data loading  
 
 # === Folders / filenames ===
 index_folder_name                       = "index"

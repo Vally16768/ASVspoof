@@ -1,105 +1,95 @@
-# asvspoof/features.py — STRICT, SECVENȚIAL, cu log pe fiecare ETAPĂ
-from __future__ import annotations
-
-# (1) Blochează thread-urile BLAS/OMP ÎNAINTE de a importa numpy/librosa
-import os as _os
-_os.environ.setdefault("OMP_NUM_THREADS", "1")
-_os.environ.setdefault("MKL_NUM_THREADS", "1")
-_os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-_os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
-
+# asvspoof/features.py — simplu, secvențial, stabil (fără CHROMA și fără PITCH), parametri auto-ajustați
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 from time import monotonic
 
 import numpy as np
 import pandas as pd
+from scipy.io import wavfile
+import librosa
+import pywt
 
 from .config import ExtractConfig
 
-def _pf(msg: str):
+
+def _pf(msg: str) -> None:
     print(msg, flush=True)
 
-def _frame_params(sr: int, window_length_ms: float):
-    n_fft = int(round(sr * window_length_ms / 1000.0))
-    n_fft_pow2 = 1 << (n_fft - 1).bit_length()
-    hop = max(1, n_fft_pow2 // 4)
-    return n_fft_pow2, hop
 
-def _load_audio_strict(path: Path, target_sr: int) -> tuple[np.ndarray, int]:
+def _frame_params(sr: int, window_length_ms: float) -> Tuple[int, int]:
+    """n_fft putere a lui 2, hop = n_fft/4 (automat)."""
+    n_fft = int(round(sr * window_length_ms / 1000.0))
+    n_fft = max(128, 1 << (n_fft - 1).bit_length())  # rotunjire la putere de 2, min 128
+    hop = max(1, n_fft // 4)
+    return n_fft, hop
+
+
+def _normalize_int_array_to_float32(x: np.ndarray) -> np.ndarray:
+    """Normalizează PCM întreg la [-1, 1] (fără hardcodări pe tip)."""
+    info = np.iinfo(x.dtype)
+    denom = float(max(abs(info.min), info.max))
+    return x.astype(np.float32) / denom
+
+
+def _load_audio_strict(path: Path, target_sr: int) -> Tuple[np.ndarray, int]:
     """
-    .wav -> scipy.io.wavfile (fără soundfile/libsndfile)
-    altceva (ex. .flac) -> librosa backend 'audioread'
+    .wav  -> scipy.io.wavfile (evităm libsndfile pentru stabilitate)
+    altceva (ex. .flac) -> librosa.load (backend implicit)
+    Conversie mono + resampling dacă e necesar + trim tăcere.
     """
     if not path.exists():
         raise FileNotFoundError(f"Audio not found: {path}")
 
     ext = path.suffix.lower()
-    import numpy.typing as npt
-
-    def _to_float32(x: npt.NDArray) -> np.ndarray:
-        if np.issubdtype(x.dtype, np.floating):
-            y = x.astype(np.float32, copy=False)
-        elif x.dtype == np.int16:
-            y = (x.astype(np.float32) / 32768.0)
-        elif x.dtype == np.int32:
-            y = (x.astype(np.float32) / 2147483648.0)
-        elif x.dtype == np.uint8:
-            y = (x.astype(np.float32) - 128.0) / 128.0
-        else:
-            y = x.astype(np.float32)
-            maxv = float(np.max(np.abs(y))) or 1.0
-            y /= maxv
-        return y
 
     if ext == ".wav":
-        from scipy.io import wavfile
-        sr, x = wavfile.read(str(path))  # x: np.int16/int32/float
+        sr, x = wavfile.read(str(path))  # x: int16/int32/float
         if x.size == 0:
             raise ValueError(f"Empty WAV: {path}")
+
         if x.ndim == 2:
             x = np.mean(x, axis=1)
-        y = _to_float32(x)
+
+        if np.issubdtype(x.dtype, np.integer):
+            y = _normalize_int_array_to_float32(x)
+        elif np.issubdtype(x.dtype, np.floating):
+            y = x.astype(np.float32, copy=False)
+        else:
+            y = x.astype(np.float32, copy=False)
+            ma = float(np.max(np.abs(y))) or 1.0
+            y /= ma
 
         if int(sr) != int(target_sr):
-            import librosa
-            librosa.set_audio_backend("audioread")
             y = librosa.resample(y, orig_sr=int(sr), target_sr=int(target_sr))
             sr = int(target_sr)
 
-        import librosa
-        y, _ = librosa.effects.trim(y, top_db=30)
-        if y.size == 0:
-            raise ValueError(f"All-silence after trim: {path}")
-        return y.astype(np.float32, copy=False), int(sr)
-
     else:
-        import librosa
-        try:
-            librosa.set_audio_backend("audioread")
-        except Exception:
-            pass
+        # Non-WAV (e.g., FLAC) — librosa gestionează resampling + mono direct
         y, sr = librosa.load(str(path), sr=target_sr, mono=True)
         if y.size == 0:
             raise ValueError(f"Empty audio: {path}")
-        y, _ = librosa.effects.trim(y, top_db=30)
-        if y.size == 0:
-            raise ValueError(f"All-silence after trim: {path}")
-        return y.astype(np.float32, copy=False), int(target_sr)
+
+    # Taie liniștea cap-coadă (prag ok pentru ASVspoof)
+    y, _ = librosa.effects.trim(y, top_db=30)
+    if y.size == 0:
+        raise ValueError(f"All-silence after trim: {path}")
+
+    return y.astype(np.float32, copy=False), int(sr)
+
 
 def extract_features_for_path(path: Path, cfg: ExtractConfig) -> Dict[str, float]:
-    # import local ca să evităm efecte globale premature
-    import librosa, pywt
+    """
+    Extrage features robuste pentru un fișier. Log granular pe etape. Fail-fast cu context clar.
+    """
+    feats: Dict[str, float] = {}
 
     # --- LOAD ---
     _pf(f"    STAGE: load        START :: {path}")
     y, sr = _load_audio_strict(path, cfg.sampling_rate)
     _pf(f"    STAGE: load        DONE  :: len={len(y)} sr={sr}")
 
-    # pregătire ferestre
+    # Pregătire ferestre (automat din SR + fereastră ms)
     n_fft, hop = _frame_params(sr, cfg.window_length_ms)
-
-    feats: Dict[str, float] = {}
 
     # --- ZCR/RMS ---
     _pf("    STAGE: zcr_rms     START")
@@ -109,7 +99,7 @@ def extract_features_for_path(path: Path, cfg: ExtractConfig) -> Dict[str, float
     feats["rms_mean"] = float(np.mean(rms))
     _pf("    STAGE: zcr_rms     DONE")
 
-    # --- Spectral basic ---
+    # --- Spectral basic (centroid/bandwidth/rolloff) ---
     _pf("    STAGE: spectral    START")
     spec_centroid = librosa.feature.spectral_centroid(y=y, sr=sr, n_fft=n_fft, hop_length=hop)
     spec_bw       = librosa.feature.spectral_bandwidth(y=y, sr=sr, n_fft=n_fft, hop_length=hop)
@@ -126,45 +116,27 @@ def extract_features_for_path(path: Path, cfg: ExtractConfig) -> Dict[str, float
         feats[f"spec_contrast_mean_{i:02d}"] = float(v)
     _pf("    STAGE: contrast    DONE")
 
-    # --- Chroma ---
-    _pf("    STAGE: chroma      START")
-    chroma_stft = librosa.feature.chroma_stft(y=y, sr=sr, n_fft=n_fft, hop_length=hop)
-    for i, v in enumerate(np.mean(chroma_stft, axis=1), start=1):
-        feats[f"chroma_stft_mean_{i:02d}"] = float(v)
-    chroma_cqt = librosa.feature.chroma_cqt(y=y, sr=sr)
-    for i, v in enumerate(np.mean(chroma_cqt, axis=1), start=1):
-        feats[f"chroma_cqt_mean_{i:02d}"] = float(v)
-    chroma_cens = librosa.feature.chroma_cens(y=y, sr=sr)
-    for i, v in enumerate(np.mean(chroma_cens, axis=1), start=1):
-        feats[f"chroma_cens_mean_{i:02d}"] = float(v)
-    _pf("    STAGE: chroma      DONE")
+    # --- Chroma — DISABLED (segfault pe unele stive) ---
+    _pf("    STAGE: chroma      SKIP  (disabled for stability)")
 
-    # --- MFCC ---
+    # --- MFCC (auto-ajustare fmax/n_mels pentru a evita filtre goale) ---
     _pf("    STAGE: mfcc        START")
+    fmax_safe   = float(min(cfg.fmax, (sr / 2.0) - 1.0))       # < Nyquist
+    n_mels_safe = int(min(cfg.n_mels, max(8, n_fft // 4)))     # puțin mai conservator ca să evităm warning-uri
     mfcc = librosa.feature.mfcc(
         y=y, sr=sr, n_mfcc=13, n_fft=n_fft, hop_length=hop,
-        n_mels=cfg.n_mels, fmax=cfg.fmax
+        n_mels=n_mels_safe, fmax=fmax_safe
     )
-    for i, v in enumerate(np.mean(mfcc, axis=1), start=1):
-        feats[f"mfcc_mean_{i:02d}"] = float(v)
-    for i, v in enumerate(np.std(mfcc, axis=1), start=1):
-        feats[f"mfcc_std_{i:02d}"] = float(v)
+    feats.update({f"mfcc_mean_{i:02d}": float(v) for i, v in enumerate(np.mean(mfcc, axis=1), start=1)})
+    feats.update({f"mfcc_std_{i:02d}":  float(v) for i, v in enumerate(np.std(mfcc, axis=1),  start=1)})
     _pf("    STAGE: mfcc        DONE")
 
-    # --- Pitch (YIN) ---
-    _pf("    STAGE: pitch_yin   START")
-    f0 = librosa.yin(y, fmin=50.0, fmax=min(1000.0, sr / 2.0), sr=sr, frame_length=n_fft, hop_length=hop)
-    f0 = np.where(np.isfinite(f0), f0, np.nan)
-    if not np.any(np.isfinite(f0)):
-        raise ValueError("Pitch extraction failed (all NaN)")
-    feats["pitch_mean"] = float(np.nanmean(f0))
-    feats["pitch_std"]  = float(np.nanstd(f0))
-    _pf("    STAGE: pitch_yin   DONE")
+    # --- Pitch — DISABLED (YIN a cauzat segfault în stack-ul tău) ---
+    _pf("    STAGE: pitch_yin   SKIP  (disabled for stability)")
 
     # --- Wavelets ---
     _pf("    STAGE: wavelets    START")
-    import pywt
-    coeffs  = pywt.wavedec(y, "db4", level=5)
+    coeffs = pywt.wavedec(y, "db4", level=5)
     if not coeffs:
         raise ValueError("Wavelet decomposition failed")
     for i, c in enumerate(coeffs, start=1):
@@ -175,13 +147,14 @@ def extract_features_for_path(path: Path, cfg: ExtractConfig) -> Dict[str, float
 
     return feats
 
+
 def extract_all_features(df_index: pd.DataFrame, cfg: ExtractConfig, *, verbose: bool = True) -> pd.DataFrame:
     """
-    STRICT + SECVENȚIAL:
-      - Preflight MINIM (doar citire audio + RMS) ca să nu "înghețe" pe o etapă grea
-      - Apoi parcurge secvențial; FAIL-FAST; log START/DONE + STAGE logs
+    Strict + secvențial:
+      - preflight minimal (load + RMS)
+      - parcurge toate fișierele; fail-fast cu path + motiv
+      - log START/DONE per fișier și etape intermediare
     """
-    # pregătește job-urile
     jobs: List[Dict[str, Any]] = [
         {
             "split": r.split,
@@ -195,12 +168,11 @@ def extract_all_features(df_index: pd.DataFrame, cfg: ExtractConfig, *, verbose:
     if not jobs:
         return pd.DataFrame(columns=["split", "file_id", "path", "label", "target"])
 
-    # --- Preflight MINIM (doar citire + RMS) ---
+    # Preflight minimal
     first = jobs[0]
     p0 = Path(first["abs_path"])
     _pf(f"[*] Preflight minimal: load+RMS :: {p0}")
     y0, sr0 = _load_audio_strict(p0, cfg.sampling_rate)
-    # ceva foarte scurt/robust, fără funcții grele
     rms0 = float(np.sqrt(np.mean(y0 ** 2)))
     _pf(f"[*] Preflight OK :: len={len(y0)} sr={sr0} rms~{rms0:.4f}")
 
