@@ -1,4 +1,4 @@
-# asvspoof/features.py — simplu, secvențial, stabil (fără CHROMA și fără PITCH), parametri auto-ajustați
+# asvspoof/features.py — simplu, secvențial, stabil; include CHROMA & PITCH (implementare NumPy)
 from pathlib import Path
 from typing import Dict, List, Any, Tuple
 from time import monotonic
@@ -77,9 +77,109 @@ def _load_audio_strict(path: Path, target_sr: int) -> Tuple[np.ndarray, int]:
     return y.astype(np.float32, copy=False), int(sr)
 
 
+# ----------------------------
+# CHROMA (implementare NumPy)
+# ----------------------------
+def _chroma_numpy(y: np.ndarray, sr: int, n_fft: int, hop: int) -> np.ndarray:
+    """
+    Chromagram robust fără librosa.feature.chroma_* (evităm potențiale segfault-uri).
+    - STFT energie: |STFT|^2
+    - mapăm fiecare bin de frecvență la una din cele 12 clase (C=0,...,B=11)
+      folosind acordaj egal-temperat cu referință C4 = 261.625565 Hz.
+    - normalizare pe coloană (sum=1) pentru robustețe la varianta de energie.
+
+    Returnează: (12, T)
+    """
+    # STFT (folosim implementarea sigură din librosa, care bazat pe NumPy FFT)
+    S = np.abs(librosa.stft(y=y, n_fft=n_fft, hop_length=hop, window="hann", center=True)) ** 2
+    # Frecvențe pentru fiecare bin
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)  # (1 + n_fft//2,)
+    # Evităm DC (0 Hz)
+    k_bins = np.arange(1, S.shape[0], dtype=int)
+    if k_bins.size == 0:
+        return np.zeros((12, S.shape[1]), dtype=np.float32)
+
+    freqs_k = freqs[k_bins]
+    # Referință pentru C (C4 ~ 261.625565 Hz)
+    fC = 261.625565
+
+    # Pitch class index pentru fiecare bin > 0 Hz
+    # pc = round(12 * log2(f / fC)) mod 12
+    with np.errstate(divide="ignore"):
+        pcs = np.round(12.0 * np.log2(np.maximum(freqs_k, 1e-12) / fC)).astype(int) % 12
+
+    # Agregăm energia binurilor pe clase
+    chroma = np.zeros((12, S.shape[1]), dtype=np.float32)
+    for pc in range(12):
+        mask = (pcs == pc)
+        if np.any(mask):
+            chroma[pc, :] = np.sum(S[k_bins[mask], :], axis=0).astype(np.float32)
+
+    # Normalizare pe coloană (evită dominanța energiei absolute)
+    col_sums = np.sum(chroma, axis=0, keepdims=True) + 1e-10
+    chroma /= col_sums
+    return chroma
+
+
+# ---------------------------------
+# Pitch (implementare autocorelație)
+# ---------------------------------
+def _pitch_autocorr(y: np.ndarray, sr: int, n_fft: int, hop: int) -> np.ndarray:
+    """
+    Estimează f0 pe cadre prin autocorelație normalizată (fără librosa.yin).
+    - fmin/fmax setate automat din (sr, n_fft).
+    - întoarce vector f0 pe cadre (NaN când nu se găsește un vârf acceptabil).
+    """
+    # Limite rezonabile, automat:
+    fmin = max(50.0, sr / float(n_fft) * 1.1)   # cel puțin 1.1 perioade în fereastră
+    fmax = min(800.0, sr / 4.0)                 # limităm sus ca să fie robust
+
+    lag_min = int(max(1, sr // fmax))
+    lag_max = int(min(n_fft - 1, sr // fmin))   # <= lungimea ferestrei
+
+    if lag_max <= lag_min + 1:
+        # Cadru prea scurt pentru estimare
+        return np.full(1, np.nan, dtype=np.float32)
+
+    win = np.hanning(n_fft).astype(np.float32)
+    frames = []
+    for start in range(0, len(y) - n_fft + 1, hop):
+        x = y[start:start + n_fft]
+        x = x - np.mean(x)
+        x = x * win
+        if not np.any(np.abs(x) > 0):
+            frames.append(np.nan)
+            continue
+
+        # Autocorelație "full", păstrăm partea pozitivă
+        r = np.correlate(x, x, mode="full")[n_fft - 1:]
+        r0 = r[0] if r[0] > 0 else 1.0
+        r /= r0
+
+        seg = r[lag_min:lag_max]
+        if seg.size == 0:
+            frames.append(np.nan)
+            continue
+
+        lag = lag_min + int(np.argmax(seg))
+        conf = r[lag]
+        # Prag mic de încredere pentru a filtra cadrele nepotrivite
+        if conf < 0.1:
+            frames.append(np.nan)
+        else:
+            f0 = float(sr / lag)
+            frames.append(f0)
+
+    if not frames:
+        return np.full(1, np.nan, dtype=np.float32)
+
+    return np.array(frames, dtype=np.float32)
+
+
 def extract_features_for_path(path: Path, cfg: ExtractConfig) -> Dict[str, float]:
     """
     Extrage features robuste pentru un fișier. Log granular pe etape. Fail-fast cu context clar.
+    Include: zcr, rms, spectral basics, spectral contrast, chroma (NumPy), mfcc, pitch (autocorr), wavelets.
     """
     feats: Dict[str, float] = {}
 
@@ -116,13 +216,17 @@ def extract_features_for_path(path: Path, cfg: ExtractConfig) -> Dict[str, float
         feats[f"spec_contrast_mean_{i:02d}"] = float(v)
     _pf("    STAGE: contrast    DONE")
 
-    # --- Chroma — DISABLED (segfault pe unele stive) ---
-    _pf("    STAGE: chroma      SKIP  (disabled for stability)")
+    # --- Chroma (NumPy) ---
+    _pf("    STAGE: chroma      START")
+    chroma = _chroma_numpy(y, sr, n_fft, hop)  # (12, T)
+    for i, v in enumerate(np.mean(chroma, axis=1), start=1):
+        feats[f"chroma_mean_{i:02d}"] = float(v)
+    _pf("    STAGE: chroma      DONE")
 
     # --- MFCC (auto-ajustare fmax/n_mels pentru a evita filtre goale) ---
     _pf("    STAGE: mfcc        START")
     fmax_safe   = float(min(cfg.fmax, (sr / 2.0) - 1.0))       # < Nyquist
-    n_mels_safe = int(min(cfg.n_mels, max(8, n_fft // 4)))     # puțin mai conservator ca să evităm warning-uri
+    n_mels_safe = int(min(cfg.n_mels, max(8, n_fft // 4)))     # conservator, fără canale goale
     mfcc = librosa.feature.mfcc(
         y=y, sr=sr, n_mfcc=13, n_fft=n_fft, hop_length=hop,
         n_mels=n_mels_safe, fmax=fmax_safe
@@ -131,8 +235,14 @@ def extract_features_for_path(path: Path, cfg: ExtractConfig) -> Dict[str, float
     feats.update({f"mfcc_std_{i:02d}":  float(v) for i, v in enumerate(np.std(mfcc, axis=1),  start=1)})
     _pf("    STAGE: mfcc        DONE")
 
-    # --- Pitch — DISABLED (YIN a cauzat segfault în stack-ul tău) ---
-    _pf("    STAGE: pitch_yin   SKIP  (disabled for stability)")
+    # --- Pitch (autocorelație NumPy) ---
+    _pf("    STAGE: pitch_acf   START")
+    f0_track = _pitch_autocorr(y, sr, n_fft, hop)  # vector pe cadre (NaN unde nu detectăm)
+    if np.all(~np.isfinite(f0_track)):
+        raise ValueError("Pitch extraction (autocorr) failed (all NaN)")
+    feats["pitch_mean"] = float(np.nanmean(f0_track))
+    feats["pitch_std"]  = float(np.nanstd(f0_track))
+    _pf("    STAGE: pitch_acf   DONE")
 
     # --- Wavelets ---
     _pf("    STAGE: wavelets    START")
