@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 import pandas as pd
 
-from . import constants as C
+import constants as C
 from .config import ExtractConfig, FEATURES_LIST, FEATURE_NAME_MAPPING
 from .indexing import load_existing_indices
 from .features import extract_all_features

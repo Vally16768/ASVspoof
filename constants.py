@@ -46,7 +46,10 @@ feature_name_reverse_mapping = {v: k for k, v in feature_name_mapping.items()}
 cnn1d_default_combo_name = f"{feature_name_mapping['mfcc']}_mfcc128"  # "A_mfcc128"
 
 # === 1D-CNN (MFCC) training defaults ===
-cnn1d_n_mfcc           = 128
+window_length_ms     = 10
+fmax                 = 8000
+n_mels                 = 128
+n_mfcc           = 128
 cnn1d_duration_seconds = 4.0
 cnn1d_batch_size       = 64
 cnn1d_epochs           = 200

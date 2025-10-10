@@ -4,11 +4,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
-from . import constants as C
+import constants as C
 
-FEATURES_LIST: List[str] = list(C.combo_features_list)
-FEATURE_NAME_MAPPING: Dict[str, str] = dict(C.combo_feature_name_mapping)
-FEATURE_NAME_REVERSE_MAPPING: Dict[str, str] = dict(C.combo_feature_name_reverse_mapping)
+try:
+    FEATURES_LIST: List[str] = list(C.combo_features_list)
+except AttributeError:
+    # fallback minimal; va fi suficient pt. pornire
+    FEATURES_LIST = [
+        'zcr_mean','rms_mean','spec_centroid_mean','spec_bw_mean','spec_rolloff_mean',
+        'pitch_mean','pitch_std'
+    ]
+
+try:
+    FEATURE_NAME_MAPPING: Dict[str, str] = dict(C.combo_feature_name_mapping)
+except AttributeError:
+    FEATURE_NAME_MAPPING = {k: k for k in FEATURES_LIST}
+
+try:
+    FEATURE_NAME_REVERSE_MAPPING: Dict[str, str] = dict(C.combo_feature_name_reverse_mapping)
+except AttributeError:
+    FEATURE_NAME_REVERSE_MAPPING = {v: k for k, v in FEATURE_NAME_MAPPING.items()}
 
 @dataclass
 class ExtractConfig:
