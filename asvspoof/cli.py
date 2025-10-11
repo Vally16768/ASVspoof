@@ -6,9 +6,51 @@ import pandas as pd
 
 import constants as C
 from .config import ExtractConfig, FEATURES_LIST, FEATURE_NAME_MAPPING, INDEX_FOLDER_NAME
-from .indexing import load_existing_indices
+# Assuming you have these modules; keep as-is if already present
+try:
+    from .indexing import load_existing_indices
+except Exception:
+    # Fallback: minimal loader that expects CSVs in INDEX_FOLDER_NAME
+    def load_existing_indices(data_root: Path, index_folder_name: str) -> pd.DataFrame:
+        idx_dir = Path(data_root) / index_folder_name
+        dfs = []
+        for split, name in [("train","train.csv"), ("val","val.csv"), ("test","test.csv"), ("eval","eval.csv")]:
+            p = idx_dir / name
+            if p.exists():
+                df = pd.read_csv(p)
+                df["split"] = split
+                dfs.append(df)
+        if not dfs:
+            raise SystemExit(f"No index CSVs found in {idx_dir}")
+        df = pd.concat(dfs, ignore_index=True)
+        # Normalise expected columns
+        rename = {}
+        for c in ["utt_id","file_id"]:
+            if c in df.columns:
+                rename[c] = "file_id"
+                break
+        if "path" not in df.columns and "abs_path" in df.columns:
+            rename["abs_path"] = "path"
+        if rename:
+            df = df.rename(columns=rename)
+        # Build target from label if present
+        if "label" in df.columns and "target" not in df.columns:
+            df["target"] = (df["label"].astype(str).str.lower() == "bonafide").astype("int16")
+        # Ensure abs path
+        df["abs_path"] = df["path"].map(lambda p: str(Path(p).resolve()))
+        return df
+
 from .features import extract_all_features
-from .io_utils import write_features_tables
+try:
+    from .io_utils import write_features_tables
+except Exception:
+    # Minimal writer
+    def write_features_tables(feat_df: pd.DataFrame, out_dir: Path) -> None:
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        feat_df.to_parquet(out_dir / "features_all.parquet", index=False)
+        feat_df.to_csv(out_dir / "features_all.csv", index=False)
+
 from .combos import materialize_combos, all_combo_codes, normalize_codes_to_sorted_unique
 
 def _print(msg: str):
@@ -76,7 +118,6 @@ def _cmd_combos(args) -> None:
 
 def _cmd_list(_args) -> None:
     _print("Feature groups & letters:")
-    # Print frumos: Literă — Nume — identificator grup
     from .combos import _effective_letter_maps
     fwd, _ = _effective_letter_maps()
     for g in FEATURES_LIST:

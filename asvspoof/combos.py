@@ -154,13 +154,16 @@ def materialize_combos(feat_df: pd.DataFrame, out_dir: Path, codes: List[str]) -
     }
     meta_path.write_text(json.dumps(meta, indent=2))
 
+    # -------- FIX: Avoid split mixing by using masks / reset_index --------
     df_lab = feat_df[feat_df["split"].isin(["train", "val", "test"])].copy()
-    split_idx = {s: df_lab.index[df_lab["split"] == s] for s in ["train", "val", "test"]}
+    df_lab.reset_index(drop=True, inplace=True)
 
     base_cols = sorted([c for c in df_lab.columns if c not in META_COLS])
     M = df_lab[base_cols]
     y_all = df_lab["target"].astype("int16").to_numpy()
     col_to_pos = {c: i for i, c in enumerate(base_cols)}
+
+    split_mask = {s: (df_lab["split"] == s).to_numpy() for s in ["train", "val", "test"]}
 
     def slice_for(code: str) -> tuple[List[str], List[int]]:
         cols = columns_for_code(code, group_cols)
@@ -180,11 +183,12 @@ def materialize_combos(feat_df: pd.DataFrame, out_dir: Path, codes: List[str]) -
         cols, pos = slice_for(code)
         if not cols:
             continue
+        Ms = M.iloc[:, pos]
         for split in ["train", "val", "test"]:
-            idx = split_idx.get(split)
-            if idx is None or len(idx) == 0:
+            mask = split_mask.get(split)
+            if mask is None or not mask.any():
                 continue
-            X = M.iloc[idx, pos].to_numpy(dtype=np.float32, copy=False)
-            y = y_all[idx]
+            X = Ms[mask].to_numpy(dtype=np.float32, copy=False)
+            y = y_all[mask]
             out_path = out_dir / "combos" / split / f"{code}.npz"
             write_npz(out_path, X, y, cols, code)

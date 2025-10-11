@@ -138,7 +138,5 @@ class ExtractConfig:
     n_mels: int             = N_MELS
     fmax: float             = FMAX
 
-# ------- Compat aliases for alte module vechi -------
-# (constants.feature_name_mapping nu mai e folosit aici pentru combos;
-#  combos.py importă doar FEATURE_NAME_REVERSE_MAPPING și FEATURE_NAME_MAPPING)
+# ------- Compat aliases pentru cod vechi -------
 FEATURE_NAME_MAPPING_LETTERS: dict[str, str] = getattr(C, "feature_name_mapping", {})
