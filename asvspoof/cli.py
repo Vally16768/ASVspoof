@@ -76,8 +76,12 @@ def _cmd_combos(args) -> None:
 
 def _cmd_list(_args) -> None:
     _print("Feature groups & letters:")
+    # Print frumos: Literă — Nume — identificator grup
+    from .combos import _effective_letter_maps
+    fwd, _ = _effective_letter_maps()
     for g in FEATURES_LIST:
-        _print(f"  {FEATURE_NAME_MAPPING[g]}: {g}")
+        letter = fwd[g]
+        _print(f"  {letter}: {FEATURE_NAME_MAPPING[g]}  ({g})")
     _print("\nTotal combos non-goale: " + str(2 ** len(FEATURES_LIST) - 1))
 
 def build_arg_parser() -> argparse.ArgumentParser:

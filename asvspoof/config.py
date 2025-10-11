@@ -57,7 +57,7 @@ LA_TRAIN_TRN: str = _get("la_train_trn_filename", "ASVspoof2019.LA.cm.train.trn.
 LA_DEV_TRL: str   = _get("la_dev_trl_filename",   "ASVspoof2019.LA.cm.dev.trl.txt")
 LA_EVAL_TRL: str  = _get("la_eval_trl_filename",  "ASVspoof2019.LA.cm.eval.trl.txt")
 
-# Căi derivate utile (dacă ai nevoie în alte părți)
+# Căi derivate utile
 LA_TRAIN_FLAC_DIR: Path = DATA_ROOT / LA_TRAIN_FLAC_SUBDIR
 LA_DEV_FLAC_DIR:   Path = DATA_ROOT / LA_DEV_FLAC_SUBDIR
 LA_EVAL_FLAC_DIR:  Path = DATA_ROOT / LA_EVAL_FLAC_SUBDIR
@@ -70,25 +70,15 @@ MODELS_DIR: Path  = DATA_ROOT / MODELS_FOLDER_NAME
 
 
 # ---------------------------
-# Audio / Feature parameters
+# Audio / Feature parameters (din constants.py cu fallback-uri)
 # ---------------------------
-# Ia valorile din constants.py; dacă nu există, folosește fallback-uri sigure.
 SAMPLING_RATE: int        = int(_get("sampling_rate", 16000))
 WINDOW_LENGTH_MS: float   = float(_get("window_length_ms", 25.0))
 FMAX: float               = float(_get("fmax", 8000.0))
 N_MELS: int               = int(_get("n_mels", 128))
 
-# Mapările de litere pentru features (din constants.py)
-FEATURE_LETTER_MAP: dict[str, str] = _get("feature_name_mapping", {})
-FEATURE_LETTER_REVERSE: dict[str, str] = _get("feature_name_reverse_mapping", {})
-
-# Dacă vrei să expui „combo” default pentru CNN1D (din constants.py)
-CNN1D_DEFAULT_COMBO_NAME: str = _get("cnn1d_default_combo_name", "A_mfcc128")
-
-
 # ---------------------------
-# Gruparea "human-friendly" pentru comanda `list`
-# (păstrăm grupurile folosite de CLI, dar nu blocăm proiectul dacă vrei doar literele din constants)
+# Grupurile macro folosite pentru combinații
 # ---------------------------
 FEATURES_LIST = [
     "zcr_rms",
@@ -100,6 +90,7 @@ FEATURES_LIST = [
     "wavelets",
 ]
 
+# Nume „frumoase” pentru CLI / rapoarte
 FEATURE_NAME_MAPPING = {
     "zcr_rms": "ZeroCross/RMS",
     "spectral_basic": "Centroid/Bandwidth/Rolloff",
@@ -110,6 +101,28 @@ FEATURE_NAME_MAPPING = {
     "wavelets": "DWT(db4) stats",
 }
 
+# Prefix aliases: ce prefixe de coloane intră în fiecare grup
+# (acoperă exact ce produce features.py)
+GROUP_ALIASES = {
+    "zcr_rms": ["zcr", "rms"],
+    "spectral_basic": ["spec_centroid", "spec_bw", "spec_rolloff"],
+    "spectral_contrast": ["spec_contrast"],
+    "chroma": ["chroma"],
+    "mfcc": ["mfcc"],
+    "pitch": ["pitch"],
+    "wavelets": ["wavelet", "wavelets", "dwt", "wt"],
+}
+
+# Maparea stabilă literă->grup pentru fișiere .npz (opțional, altfel se auto-atribuie)
+FEATURE_NAME_REVERSE_MAPPING: dict[str, str] = {
+    "A": "mfcc",
+    "H": "chroma",
+    "K": "zcr_rms",
+    "L": "spectral_basic",
+    "M": "spectral_contrast",
+    "N": "pitch",
+    "O": "wavelets",
+}
 
 # ---------------------------
 # ExtractConfig — STRICT secvențial 
@@ -119,14 +132,13 @@ class ExtractConfig:
     data_root: Path = DATA_ROOT
     out_dir: Path   = INDEX_DIR
 
-    # audio/feature params (populate din constants.py)
+    # audio/feature params
     sampling_rate: int      = SAMPLING_RATE
     window_length_ms: float = WINDOW_LENGTH_MS
     n_mels: int             = N_MELS
     fmax: float             = FMAX
 
-# ------- Compat aliases for older modules (e.g., combos.py) -------
-# constants.feature_name_mapping:   human_name -> letter  (ex: "mfcc" -> "A")
-# constants.feature_name_reverse_mapping: letter -> human_name (ex: "A" -> "mfcc")
-FEATURE_NAME_REVERSE_MAPPING: dict[str, str] = FEATURE_LETTER_REVERSE  # expected by combos.py
-FEATURE_NAME_MAPPING_LETTERS: dict[str, str] = FEATURE_LETTER_MAP      # optional convenience
+# ------- Compat aliases for alte module vechi -------
+# (constants.feature_name_mapping nu mai e folosit aici pentru combos;
+#  combos.py importă doar FEATURE_NAME_REVERSE_MAPPING și FEATURE_NAME_MAPPING)
+FEATURE_NAME_MAPPING_LETTERS: dict[str, str] = getattr(C, "feature_name_mapping", {})
