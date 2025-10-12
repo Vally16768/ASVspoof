@@ -41,7 +41,6 @@ def load_existing_indices(data_root: Path, index_dirname: str) -> pd.DataFrame:
         "train": idx / "train.csv",
         "val":   idx / "val.csv",
         "test":  idx / "test.csv",
-        "eval":  idx / "eval.list",
     }
     missing = [k for k, p in paths.items() if not p.exists() and k != "eval"]
     if missing:
@@ -54,7 +53,6 @@ def load_existing_indices(data_root: Path, index_dirname: str) -> pd.DataFrame:
     if paths["train"].exists(): dfs.append(_load_labeled_csv(paths["train"], "train", data_root))
     if paths["val"].exists():   dfs.append(_load_labeled_csv(paths["val"],   "val",   data_root))
     if paths["test"].exists():  dfs.append(_load_labeled_csv(paths["test"],  "test",  data_root))
-    if paths["eval"].exists():  dfs.append(_load_eval_list(paths["eval"], data_root))
 
     df = pd.concat(dfs, ignore_index=True)
     return df

@@ -5,7 +5,14 @@ directory = "database/data/asvspoof2019"
 # === Dataset / split settings ===
 sampling_rate   = 16000
 random_state    = 42
-test_size       = 0.20   
+
+# Folosim LA_dev ca TEST (oficial), deci nu mai decupăm "test intern" din train.
+# Adăugăm mărimea de VALIDARE (din LA_train) — stratificat pe etichetă și grupat pe speaker.
+validation_size = 0.10
+
+# (Optional / legacy) test_size rămâne nefolosit când folosim LA_dev ca test.
+# Îl păstrăm doar ca să nu rupem scripturi vechi care îl citesc.
+test_size = 0.20
 
 # === Folders / filenames ===
 index_folder_name                       = "index"
