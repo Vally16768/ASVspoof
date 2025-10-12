@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Build ASVspoof 2019 LA indices (Option A):
   - train.csv : labeled   (LA_train minus a speaker-grouped validation cut)
-  - val.csv   : labeled   (10% from LA_train, stratified by label, grouped by speaker)
-  - test.csv  : labeled   (LA_dev — official dev set)
+  - val.csv   : labeled   (validation_size from LA_train, stratified by label, grouped by speaker)
+  - test.csv  : labeled   (LA_dev — official dev set, disjoint speakers/systems)
   - eval.list : unlabeled (LA_eval paths)
 
 All paths/names come from constants.py.
+
+Why this layout?
+- It prevents train↔test leakage (test is LA_dev).
+- It prevents train↔val leakage via group split by speaker.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ import random
 from pathlib import Path
 from typing import Iterable, List, Tuple, Dict, Set
 
-# ---------- constants.py ----------
+# ---------- Import constants.py from repo root (CWD) ----------
 sys.path.insert(0, os.getcwd())
 try:
     import importlib
@@ -25,25 +30,34 @@ try:
 except Exception as e:
     raise SystemExit(f"[!] Could not import constants.py from CWD: {e}")
 
-DATA_ROOT  = Path(getattr(C, "directory", "dataset")).resolve()
+# ---------- Read settings from constants ----------
+DATA_ROOT  = Path(getattr(C, "directory", ".")).resolve()
 INDEX_NAME = getattr(C, "index_folder_name", "index")
+
+# Validation proportion taken from LA_train (0 < p < 1)
 VAL_SIZE   = float(getattr(C, "validation_size", 0.10))
 SEED       = int(getattr(C, "random_state", 42))
 
+# Dataset relative subdirs (from DATA_ROOT)
 LA_TRAIN_FLAC_SUBDIR = getattr(C, "la_train_flac_subdir", "ASVspoof2019_LA_train/flac")
 LA_DEV_FLAC_SUBDIR   = getattr(C, "la_dev_flac_subdir",   "ASVspoof2019_LA_dev/flac")
 LA_EVAL_FLAC_SUBDIR  = getattr(C, "la_eval_flac_subdir",  "ASVspoof2019_LA_eval/flac")
 LA_PROTOCOLS_SUBDIR  = getattr(C, "la_protocols_subdir",  "ASVspoof2019_LA_cm_protocols")
 
+# Protocol filenames
 LA_TRAIN_TRN_FILENAME = getattr(C, "la_train_trn_filename", "ASVspoof2019.LA.cm.train.trn.txt")
 LA_DEV_TRL_FILENAME   = getattr(C, "la_dev_trl_filename",   "ASVspoof2019.LA.cm.dev.trl.txt")
 LA_EVAL_TRL_FILENAME  = getattr(C, "la_eval_trl_filename",  "ASVspoof2019.LA.cm.eval.trl.txt")
 
-# ---------- Parsere protocol ----------
+# File extension expected in indices (after conversion). Change to ".flac" if you index FLACs directly.
+AUDIO_EXT = ".wav"
+
+# ---------- Protocol parsers ----------
 def parse_trl_line_keep_spk(line: str) -> Tuple[str, str, str] | None:
     """
-    Format LA: <spk> <file_id> <sys> <attk> <key>
-    Returnăm (spk, file_id, key) cu key în {bonafide, spoof}.
+    Lines look like (LA):
+      <speaker> <file_id> <system_id> <attack_id> <key>
+    Return (spk, fid, key) only when key in {bonafide, spoof}.
     """
     parts = line.strip().split()
     if not parts or parts[0].startswith("#"):
@@ -67,7 +81,10 @@ def read_trl_labeled_triples(p: Path) -> List[Tuple[str, str, str]]:
     return items
 
 def read_any_fids(p: Path) -> List[str]:
-    """Extrage file_id chiar dacă lipsesc etichetele (util pentru eval)."""
+    """
+    Extract file_ids even if labels are absent (useful for eval list).
+    Expected at least: <speaker> <file_id> ...
+    """
     if not p.exists():
         return []
     fids: List[str] = []
@@ -94,28 +111,30 @@ def write_list(out_txt: Path, paths: Iterable[str]) -> None:
             f.write(p + "\n")
 
 def as_rows_pairs(root: Path, base_rel: str, triples: Iterable[Tuple[str, str, str]]) -> List[Tuple[str, str]]:
-    """Mapează (spk,fid,label) -> (relpath,label)."""
+    """
+    Map (spk, fid, label) -> (relative path, label), using AUDIO_EXT.
+    """
     base = root / base_rel
     out: List[Tuple[str, str]] = []
     for _, fid, key in triples:
-        rel = (base / f"{fid}.wav").relative_to(root)
+        rel = (base / f"{fid}{AUDIO_EXT}").relative_to(root)
         out.append((str(rel), key))
     return out
 
-# ---------- Split: stratificat pe LABEL, grupat pe SPEAKER ----------
+# ---------- Split: stratified by LABEL, grouped by SPEAKER ----------
 def stratified_group_split_by_speaker(
     triples: List[Tuple[str, str, str]],  # (spk, fid, label)
     val_size: float,
     seed: int,
 ) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
     """
-    Împarte LA_train în (train, val) alegând SPEAKERI pentru validare,
-    separat pe fiecare label (bonafide/spoof).
+    Split LA_train into (train, val) by selecting SPEAKERS for validation
+    separately within each label (bonafide/spoof). This avoids speaker overlap.
     """
     if not (0.0 < val_size < 1.0):
-        raise ValueError("val_size must be in (0,1)")
+        raise ValueError("validation_size must be in (0,1)")
 
-    # grupăm speakerii pe label
+    # Group speakers by label
     speakers_by_label: Dict[str, Set[str]] = {}
     for spk, _, lab in triples:
         speakers_by_label.setdefault(lab, set()).add(spk)
@@ -124,8 +143,11 @@ def stratified_group_split_by_speaker(
     val_speakers: Set[str] = set()
     for lab, spk_set in speakers_by_label.items():
         spks = sorted(spk_set)
+        if not spks:
+            continue
         n_take = max(1, round(val_size * len(spks)))
-        n_take = min(n_take, len(spks) - 1) if len(spks) > 1 else 1
+        if len(spks) > 1:
+            n_take = min(n_take, len(spks) - 1)  # keep at least one speaker for train
         chosen = set(rng.sample(spks, n_take))
         val_speakers |= chosen
 
@@ -136,7 +158,7 @@ def stratified_group_split_by_speaker(
 
 # ---------- Main ----------
 def main() -> None:
-    # Verificări structură — la fel ca înainte
+    # Basic structure checks
     must_exist = [
         DATA_ROOT / LA_TRAIN_FLAC_SUBDIR,
         DATA_ROOT / LA_DEV_FLAC_SUBDIR,
@@ -160,47 +182,49 @@ def main() -> None:
     dev_trl   = protos / LA_DEV_TRL_FILENAME
     eval_trl  = protos / LA_EVAL_TRL_FILENAME
 
-    if not train_trn.exists() or not dev_trl.exists():
-        raise SystemExit(f"[!] Missing protocol(s): {train_trn if not train_trn.exists() else ''} {dev_trl if not dev_trl.exists() else ''}")
+    if not train_trn.exists():
+        raise SystemExit(f"[!] Missing protocol file: {train_trn}")
+    if not dev_trl.exists():
+        raise SystemExit(f"[!] Missing protocol file: {dev_trl}")
 
-    # 1) LA_train: citim (spk,fid,label)
+    # 1) LA_train (spk,fid,label)
     triples_train_full = read_trl_labeled_triples(train_trn)
 
-    # 2) Split train/val pe SPEAKER (stratificat pe label)
+    # 2) Split train/val by SPEAKER (stratified by label)
     triples_train, triples_val = stratified_group_split_by_speaker(
         triples_train_full, val_size=VAL_SIZE, seed=SEED
     )
 
-    # 3) LA_dev devine TEST (perechi path,label)
+    # 3) LA_dev becomes TEST (paths+labels)
     dev_pairs = as_rows_pairs(DATA_ROOT, LA_DEV_FLAC_SUBDIR, read_trl_labeled_triples(dev_trl))
 
-    # 4) EVAL list (doar path-uri)
+    # 4) EVAL list (paths only)
     eval_paths: List[str] = []
     base_eval = DATA_ROOT / LA_EVAL_FLAC_SUBDIR
     if eval_trl.exists():
         fids = read_any_fids(eval_trl)
-        eval_paths = [str((base_eval / f"{fid}.wav").relative_to(DATA_ROOT)) for fid in fids]
+        eval_paths = [str((base_eval / f"{fid}{AUDIO_EXT}").relative_to(DATA_ROOT)) for fid in fids]
     else:
         if not base_eval.exists():
-            raise SystemExit(f"[!] Eval FLAC dir not found: {base_eval}")
-        eval_paths = [str(p.relative_to(DATA_ROOT)) for p in sorted(base_eval.glob("*.wav"))]
+            raise SystemExit(f"[!] Eval audio dir not found: {base_eval}")
+        eval_paths = [str(p.relative_to(DATA_ROOT)) for p in sorted(base_eval.glob(f"*{AUDIO_EXT}"))]
 
-    # 5) Scriem index-urile
+    # 5) Write indices
     idx = DATA_ROOT / INDEX_NAME
-    write_csv(idx / "train.csv", as_rows_pairs(DATA_ROOT, LA_TRAIN_FLAC_SUBDIR, triples_train))
-    write_csv(idx / "val.csv",   as_rows_pairs(DATA_ROOT, LA_TRAIN_FLAC_SUBDIR, triples_val))
+    tr_pairs = as_rows_pairs(DATA_ROOT, LA_TRAIN_FLAC_SUBDIR, triples_train)
+    va_pairs = as_rows_pairs(DATA_ROOT, LA_TRAIN_FLAC_SUBDIR, triples_val)
+    write_csv(idx / "train.csv", tr_pairs)
+    write_csv(idx / "val.csv",   va_pairs)
     write_csv(idx / "test.csv",  dev_pairs)
     write_list(idx / "eval.list", eval_paths)
 
-    # Summary util
+    # Summary
     def count_lbl(rows: List[Tuple[str, str]]) -> Dict[str, int]:
         c: Dict[str, int] = {}
         for _, lab in rows:
             c[lab] = c.get(lab, 0) + 1
         return c
 
-    tr_pairs = as_rows_pairs(DATA_ROOT, LA_TRAIN_FLAC_SUBDIR, triples_train)
-    va_pairs = as_rows_pairs(DATA_ROOT, LA_TRAIN_FLAC_SUBDIR, triples_val)
     print("[✓] Wrote indices to:", idx)
     print(f"    train.csv : {len(tr_pairs)}  by label {count_lbl(tr_pairs)}")
     print(f"    val.csv   : {len(va_pairs)}  by label {count_lbl(va_pairs)}")
