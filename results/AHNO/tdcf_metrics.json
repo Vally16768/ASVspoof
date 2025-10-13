@@ -1,0 +1,14 @@
+{
+  "asv_score_file": "/home/vpopescu/projects/ASVspoof/tDCF_python_v2/scores/ASVspoof2019_LA_eval_asv_scores.txt",
+  "eer_asv": 0.02457783738686887,
+  "asv_threshold": -5.680051,
+  "Pfa_asv": 0.024604674888228765,
+  "Pmiss_asv": 0.024581005586592177,
+  "Pfa_spoof_asv": 0.7606524529601453,
+  "eer_cm": 0.20524881725481448,
+  "min_tDCF": 0.4875452419182916,
+  "min_tDCF_threshold_index": 14925,
+  "cm_threshold_at_min_tDCF": 0.13973641,
+  "Nbona": 2548,
+  "Nspoof": 22296
+}

@@ -1,0 +1,12 @@
+{
+  "accuracy": 0.8090484624054097,
+  "balanced_accuracy": 0.7768150400012618,
+  "roc_auc": 0.86708922980884,
+  "eer": 0.2061804808037316,
+  "eer_threshold": 0.42534124851226807,
+  "f1_bonafide": 0.4416195856873823,
+  "f1_spoof": 0.884832006214799,
+  "n_test": 24844,
+  "n_test_pos_bonafide": 2548,
+  "n_test_neg_spoof": 22296
+}

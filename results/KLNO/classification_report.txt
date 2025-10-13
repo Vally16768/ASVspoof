@@ -1,0 +1,8 @@
+              precision    recall  f1-score   support
+
+    spoof(0)       0.96      0.75      0.84     22296
+ bonafide(1)       0.25      0.71      0.37      2548
+
+    accuracy                           0.75     24844
+   macro avg       0.60      0.73      0.61     24844
+weighted avg       0.89      0.75      0.79     24844
