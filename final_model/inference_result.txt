@@ -1,0 +1,44 @@
+(.venv) vpopescu@prosys01:~/projects/ASVspoof$ python infer_ahkmno.py --combo AHKMNO \
+>   --model final_model/best_model.keras \
+>   --audio final_model/fake.wav \
+>   --labels final_model/labels.txt \
+>   --scaler final_model/scaler.pkl
+[stage] extract features (features.py) ...
+    STAGE: load        START :: final_model/fake.wav
+    STAGE: load        DONE  :: len=45568 sr=16000
+    STAGE: zcr_rms     START
+    STAGE: zcr_rms     DONE
+    STAGE: spectral    START
+    STAGE: spectral    DONE
+    STAGE: contrast    START
+    STAGE: contrast    DONE
+    STAGE: chroma      START
+    STAGE: chroma      DONE
+    STAGE: mfcc        START
+    STAGE: mfcc        DONE
+    STAGE: pitch_acf   START
+    STAGE: pitch_acf   DONE
+    STAGE: wavelets    START
+    STAGE: wavelets    DONE
+[stage] loading model ...
+2025-10-26 21:41:06.642644: I tensorflow/core/platform/cpu_feature_guard.cc:193] This TensorFlow binary is optimized with oneAPI Deep Neural Network Library (oneDNN) to use the following CPU instructions in performance-critical operations:  AVX2 AVX512F AVX512_VNNI FMA
+To enable them in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2025-10-26 21:41:08.618720: I tensorflow/core/platform/cpu_feature_guard.cc:193] This TensorFlow binary is optimized with oneAPI Deep Neural Network Library (oneDNN) to use the following CPU instructions in performance-critical operations:  AVX2 AVX512F AVX512_VNNI FMA
+To enable them in other operations, rebuild TensorFlow with the appropriate compiler flags.
+[stage] model loaded via keras
+
+=== Rezultat inferență (index : p) ===
+  0 : 1.0000
+
+Predicție: clasa 0 (p=1.0000)
+
+[i] Effective letter → group mapping (for this run):
+    A -> mfcc
+    H -> chroma
+    K -> zcr_rms
+    M -> spectral_contrast
+    N -> pitch
+    O -> wavelets
+
+[i] Num features selected for AHKMNO: 61
+(.venv) vpopescu@prosys01:~/projects/ASVspoof$ 
