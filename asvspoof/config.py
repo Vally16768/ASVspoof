@@ -14,6 +14,13 @@ import constants as C
 def _get(name: str, default):
     return getattr(C, name, default)
 
+
+def _as_bool(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    s = str(v).strip().lower()
+    return s in {"1", "true", "yes", "y", "on"}
+
 def _get_path_from_env_or_constants() -> Path:
     """
     Respectă ASVSPOOF_ROOT dacă este setat; altfel folosește constants.directory.
@@ -45,6 +52,8 @@ ACCURACY_TXT_FILENAME: str   = _get("accuracy_txt_filename", "accuracy.txt")
 CLASS_REPORT_TXT: str        = _get("classification_report_filename", "classification_report.txt")
 PREDICTIONS_CSV: str         = _get("predictions_csv_filename", "predictions.csv")
 CONF_MAT_PNG: str            = _get("confusion_matrix_png_filename", "confusion_matrix.png")
+COMBO_PRIMARY_METRIC: str    = str(_get("combo_primary_metric", "min_tDCF"))
+COMBO_TIE_BREAK_METRIC: str  = str(_get("combo_tie_break_metric", "accuracy"))
 
 # Subdirectoare ASVspoof 2019 LA (relative la DATA_ROOT)
 LA_TRAIN_FLAC_SUBDIR: str = _get("la_train_flac_subdir", "ASVspoof2019_LA_train/flac")
@@ -76,6 +85,16 @@ SAMPLING_RATE: int        = int(_get("sampling_rate", 16000))
 WINDOW_LENGTH_MS: float   = float(_get("window_length_ms", 25.0))
 FMAX: float               = float(_get("fmax", 8000.0))
 N_MELS: int               = int(_get("n_mels", 128))
+RANDOM_STATE: int         = int(_get("random_state", 42))
+
+# Extended feature params
+LPCC_NUM_CEPS: int        = int(_get("lpcc_num_ceps", 30))
+CQCC_NUM_CEPS: int        = int(_get("cqcc_num_ceps", 30))
+SSL_WAV2VEC_MODEL_ID: str = str(_get("ssl_wav2vec_model_id", "facebook/wav2vec2-xls-r-300m"))
+SSL_WAVLM_MODEL_ID: str   = str(_get("ssl_wavlm_model_id", "microsoft/wavlm-large"))
+SSL_PCA_COMPONENTS: int   = int(_get("ssl_pca_components", 128))
+SSL_REQUIRE_GPU: bool     = _as_bool(_get("ssl_require_gpu", True))
+SSL_HF_CACHE_DIR: str     = str(_get("ssl_hf_cache_dir", "") or "")
 
 # ---------------------------
 # Grupurile macro folosite pentru combinații
@@ -88,6 +107,10 @@ FEATURES_LIST = [
     "mfcc",
     "pitch",
     "wavelets",
+    "lpcc",
+    "cqcc",
+    "wav2vec",
+    "wavlm",
 ]
 
 # Nume „frumoase” pentru CLI / rapoarte
@@ -99,6 +122,10 @@ FEATURE_NAME_MAPPING = {
     "mfcc": "MFCC(13) mean/std",
     "pitch": "YIN pitch mean/std",
     "wavelets": "DWT(db4) stats",
+    "lpcc": "LPCC(30)+delta+delta2 mean/std",
+    "cqcc": "CQCC(30)+delta+delta2 mean/std",
+    "wav2vec": "wav2vec2 mean/std + PCA",
+    "wavlm": "WaveLM mean/std + PCA",
 }
 
 # Prefix aliases: ce prefixe de coloane intră în fiecare grup
@@ -111,11 +138,19 @@ GROUP_ALIASES = {
     "mfcc": ["mfcc"],
     "pitch": ["pitch"],
     "wavelets": ["wavelet", "wavelets", "dwt", "wt"],
+    "lpcc": ["lpcc"],
+    "cqcc": ["cqcc"],
+    "wav2vec": ["wav2vec", "w2v"],
+    "wavlm": ["wavlm"],
 }
 
 # Maparea stabilă literă->grup pentru fișiere .npz (opțional, altfel se auto-atribuie)
 FEATURE_NAME_REVERSE_MAPPING: dict[str, str] = {
     "A": "mfcc",
+    "B": "lpcc",
+    "C": "cqcc",
+    "D": "wav2vec",
+    "E": "wavlm",
     "H": "chroma",
     "K": "zcr_rms",
     "L": "spectral_basic",
@@ -137,6 +172,16 @@ class ExtractConfig:
     window_length_ms: float = WINDOW_LENGTH_MS
     n_mels: int             = N_MELS
     fmax: float             = FMAX
+
+    # extended feature params
+    random_state: int       = RANDOM_STATE
+    lpcc_num_ceps: int      = LPCC_NUM_CEPS
+    cqcc_num_ceps: int      = CQCC_NUM_CEPS
+    ssl_wav2vec_model_id: str = SSL_WAV2VEC_MODEL_ID
+    ssl_wavlm_model_id: str   = SSL_WAVLM_MODEL_ID
+    ssl_pca_components: int = SSL_PCA_COMPONENTS
+    ssl_require_gpu: bool   = SSL_REQUIRE_GPU
+    ssl_hf_cache_dir: str   = SSL_HF_CACHE_DIR
 
 # ------- Compat aliases pentru cod vechi -------
 FEATURE_NAME_MAPPING_LETTERS: dict[str, str] = getattr(C, "feature_name_mapping", {})

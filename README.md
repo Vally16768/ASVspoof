@@ -62,6 +62,7 @@ database/data/asvspoof2019/
 - `make extract` — run `asvspoof_features_pipeline.py` to extract features and produce `features_all.parquet` and index files.
 - `make combos` — build selected combos, e.g. `make combos codes="AB M"`
 - `make combos_all` — materialize all combos (heavy: 2^N - 1).
+- `make benchmark_extend_best` — extinde best combo-ul curent cu LPCC/CQCC/wav2vec/WaveLM, rulează cele 16 combinații și actualizează `final_model/` cu câștigătorul.
 - `make clean` — remove generated artifacts.
 
 ## Usage examples

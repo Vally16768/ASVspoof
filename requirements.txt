@@ -9,3 +9,7 @@ pyarrow
 PyWavelets 
 tqdm 
 ffmpeg-python
+spafe
+torch
+torchaudio
+transformers

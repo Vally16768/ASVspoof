@@ -40,7 +40,7 @@ except Exception:
         df["abs_path"] = df["path"].map(lambda p: str(Path(p).resolve()))
         return df
 
-from .features import extract_all_features
+from .features import extract_all_features, normalize_groups
 try:
     from .io_utils import write_features_tables
 except Exception:
@@ -55,6 +55,34 @@ from .combos import materialize_combos, all_combo_codes, normalize_codes_to_sort
 
 def _print(msg: str):
     print(msg, flush=True)
+
+
+def _merge_feature_tables(existing: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFrame:
+    key_cols = ["split", "file_id", "path"]
+    meta_cols = ["split", "file_id", "path", "label", "target"]
+
+    for c in key_cols:
+        if c not in existing.columns or c not in new_df.columns:
+            raise SystemExit(f"[!] Missing key column '{c}' for merge.")
+
+    ex = existing.copy()
+    nw = new_df.copy()
+
+    ex_idx = ex.set_index(key_cols)
+    nw_idx = nw.set_index(key_cols)
+
+    if set(ex_idx.index) != set(nw_idx.index):
+        raise SystemExit("[!] Existing features table and fresh extraction have different row keys.")
+
+    nw_idx = nw_idx.reindex(ex_idx.index)
+    new_feat_cols = [c for c in nw.columns if c not in meta_cols]
+    for col in new_feat_cols:
+        ex_idx[col] = nw_idx[col]
+
+    merged = ex_idx.reset_index()
+    cols_order = [c for c in meta_cols if c in merged.columns]
+    other_cols = sorted([c for c in merged.columns if c not in cols_order])
+    return merged[cols_order + other_cols]
 
 def _verify_all_paths_exist(df_index: pd.DataFrame) -> None:
     from pathlib import Path
@@ -79,6 +107,7 @@ def _cmd_extract(args) -> None:
         data_root=data_root,
         out_dir=out_dir,
     )
+    groups = normalize_groups(args.groups)
 
     _print("[1/3] Loading existing indices (train/val/test/eval)...")
     df_index = load_existing_indices(cfg.data_root, INDEX_FOLDER_NAME)
@@ -86,8 +115,16 @@ def _cmd_extract(args) -> None:
     _print("[1.1] Verifying all referenced files exist...")
     _verify_all_paths_exist(df_index)
 
-    _print("[2/3] Extracting features (sequential) ...")
-    feat_df = extract_all_features(df_index, cfg, verbose=True)
+    _print(f"[2/3] Extracting features (sequential) for groups: {', '.join(groups)} ...")
+    fresh_df = extract_all_features(df_index, cfg, verbose=True, groups=groups, fit_ssl_pca=True)
+
+    parquet_path = out_dir / "features_all.parquet"
+    if args.merge_existing and parquet_path.exists():
+        _print("[2.1] Merging new feature columns into existing features_all.parquet ...")
+        existing_df = pd.read_parquet(parquet_path)
+        feat_df = _merge_feature_tables(existing_df, fresh_df)
+    else:
+        feat_df = fresh_df
 
     meta_cols = {"split", "file_id", "path", "label", "target"}
     feat_cols = [c for c in feat_df.columns if c not in meta_cols]
@@ -132,6 +169,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     pe = sub.add_parser("extract", help="Extrage features folosind indecșii existenți (strict, secvențial)")
     pe.add_argument("--data-root", type=str, default=C.directory)
     pe.add_argument("--out-dir", type=str, default=None)
+    pe.add_argument("--groups", nargs="*", default=["all"], help="Subset grupuri features sau 'all'")
+    pe.add_argument("--merge-existing", action="store_true", help="Adaugă/înlocuiește doar coloanele nou extrase în features_all existent")
     pe.set_defaults(func=_cmd_extract)
 
     pc = sub.add_parser("combos", help="Generează NPZ pentru combinații (train/val/test)")

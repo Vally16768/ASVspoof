@@ -8,6 +8,9 @@ SHELL := /bin/bash
 MAKEFLAGS += --no-builtin-rules
 
 PY ?= python
+ifneq ("$(wildcard .venv/bin/python)","")
+PY := ./.venv/bin/python
+endif
 
 # ----- Helpers (no constants in Make vars) -----
 .PHONY: help check_scripts check_la
@@ -20,7 +23,8 @@ help:
 > echo "  combos_all          - materialize ALL combinations"
 > echo "  combos_codes        - materialize only given combinations (set CODES='AB M AEMNO')"
 > echo "  train_all_combos    - train on all materialized combinations"
-> echo "  top_results         - show top 20 by accuracy (paths resolved in Python)"
+> echo "  benchmark_extend_best - extend best combo with LPCC/CQCC/wav2vec/WaveLM (16 combos)"
+> echo "  top_results         - show top ranked combos (metric from constants or --metric)"
 > echo "  clean               - remove feature cache + temp (paths resolved in Python)"
 > echo "  clean_combos        - remove only index/combos (paths resolved in Python)"
 > echo "  nohup_extract       - run extract with nohup (logs/)"
@@ -66,6 +70,10 @@ combos_codes: check_scripts
 
 train_all_combos: check_scripts
 > $(PY) scripts/train_all_combos.py
+
+.PHONY: benchmark_extend_best
+benchmark_extend_best: check_scripts
+> $(PY) scripts/benchmark_extend_best.py
 
 top_results:
 > $(PY) tools/top_results.py

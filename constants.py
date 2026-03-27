@@ -1,6 +1,25 @@
+from pathlib import Path
+
 # === Dataset location (ASVspoof 2019 LA) ===
 # If ASVSPOOF_ROOT is not set, fall back to "dataset"
-directory = "database/data/asvspoof2019"
+_DATASET_PRIMARY = Path("database/data/asvspoof2019")
+_DATASET_FALLBACK = Path("database/database/data/asvspoof2019")
+
+
+def _looks_like_la_root(p: Path) -> bool:
+    return (
+        (p / "ASVspoof2019_LA_train" / "flac").is_dir()
+        and (p / "ASVspoof2019_LA_dev" / "flac").is_dir()
+        and (p / "ASVspoof2019_LA_cm_protocols").is_dir()
+    )
+
+
+if _looks_like_la_root(_DATASET_PRIMARY):
+    directory = str(_DATASET_PRIMARY)
+elif _looks_like_la_root(_DATASET_FALLBACK):
+    directory = str(_DATASET_FALLBACK)
+else:
+    directory = str(_DATASET_PRIMARY)
 
 # === Dataset / split settings ===
 sampling_rate   = 16000
@@ -47,6 +66,19 @@ feature_name_mapping = {
     "zcr": "J",
 }
 feature_name_reverse_mapping = {v: k for k, v in feature_name_mapping.items()}
+
+# === Combo selection / ranking defaults ===
+combo_primary_metric = "min_tDCF"
+combo_tie_break_metric = "accuracy"
+
+# === Extended feature defaults (LPCC/CQCC + SSL) ===
+lpcc_num_ceps = 30
+cqcc_num_ceps = 30
+ssl_wav2vec_model_id = "facebook/wav2vec2-xls-r-300m"
+ssl_wavlm_model_id = "microsoft/wavlm-large"
+ssl_pca_components = 128
+ssl_require_gpu = True
+ssl_hf_cache_dir = ""
 
 # === Default run “combo” name for the 1D-CNN MFCC model ===
 cnn1d_default_combo_name = f"{feature_name_mapping['mfcc']}_mfcc128"  # "A_mfcc128"
