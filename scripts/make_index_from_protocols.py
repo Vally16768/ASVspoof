@@ -20,7 +20,7 @@ import os
 import sys
 import random
 from pathlib import Path
-from typing import Iterable, List, Tuple, Dict, Set
+from typing import Iterable, List, Tuple, Dict, Set, Optional
 
 # ---------- Import constants.py from repo root (CWD) ----------
 sys.path.insert(0, os.getcwd())
@@ -49,8 +49,20 @@ LA_TRAIN_TRN_FILENAME = getattr(C, "la_train_trn_filename", "ASVspoof2019.LA.cm.
 LA_DEV_TRL_FILENAME   = getattr(C, "la_dev_trl_filename",   "ASVspoof2019.LA.cm.dev.trl.txt")
 LA_EVAL_TRL_FILENAME  = getattr(C, "la_eval_trl_filename",  "ASVspoof2019.LA.cm.eval.trl.txt")
 
-# File extension expected in indices (after conversion). Change to ".flac" if you index FLACs directly.
-AUDIO_EXT = ".wav"
+# Candidate extensions (ordered by preference)
+try:
+    _ext_from_constants = str(getattr(C, "audio_ext", "")).strip().lower()
+except Exception:
+    _ext_from_constants = ""
+
+AUDIO_EXT_CANDIDATES: List[str] = []
+if _ext_from_constants:
+    if not _ext_from_constants.startswith("."):
+        _ext_from_constants = "." + _ext_from_constants
+    AUDIO_EXT_CANDIDATES.append(_ext_from_constants)
+for _ext in [".wav", ".flac"]:
+    if _ext not in AUDIO_EXT_CANDIDATES:
+        AUDIO_EXT_CANDIDATES.append(_ext)
 
 # ---------- Protocol parsers ----------
 def parse_trl_line_keep_spk(line: str) -> Tuple[str, str, str] | None:
@@ -110,15 +122,34 @@ def write_list(out_txt: Path, paths: Iterable[str]) -> None:
         for p in paths:
             f.write(p + "\n")
 
+
+def resolve_rel_audio_path(root: Path, base_rel: str, fid: str) -> Optional[str]:
+    base = root / base_rel
+    for ext in AUDIO_EXT_CANDIDATES:
+        p = base / f"{fid}{ext}"
+        if p.exists():
+            return str(p.relative_to(root))
+    return None
+
+
 def as_rows_pairs(root: Path, base_rel: str, triples: Iterable[Tuple[str, str, str]]) -> List[Tuple[str, str]]:
     """
-    Map (spk, fid, label) -> (relative path, label), using AUDIO_EXT.
+    Map (spk, fid, label) -> (relative path, label), auto-detecting extension.
     """
-    base = root / base_rel
     out: List[Tuple[str, str]] = []
+    missing: List[str] = []
     for _, fid, key in triples:
-        rel = (base / f"{fid}{AUDIO_EXT}").relative_to(root)
-        out.append((str(rel), key))
+        rel = resolve_rel_audio_path(root, base_rel, fid)
+        if rel is None:
+            missing.append(fid)
+            continue
+        out.append((rel, key))
+    if missing:
+        sample = ", ".join(missing[:10])
+        raise SystemExit(
+            f"[!] Could not resolve audio files for {len(missing)} entries under {base_rel}. "
+            f"Tried extensions: {AUDIO_EXT_CANDIDATES}. Sample fids: {sample}"
+        )
     return out
 
 # ---------- Split: stratified by LABEL, grouped by SPEAKER ----------
@@ -203,11 +234,33 @@ def main() -> None:
     base_eval = DATA_ROOT / LA_EVAL_FLAC_SUBDIR
     if eval_trl.exists():
         fids = read_any_fids(eval_trl)
-        eval_paths = [str((base_eval / f"{fid}{AUDIO_EXT}").relative_to(DATA_ROOT)) for fid in fids]
+        missing_eval: List[str] = []
+        for fid in fids:
+            rel = resolve_rel_audio_path(DATA_ROOT, LA_EVAL_FLAC_SUBDIR, fid)
+            if rel is None:
+                missing_eval.append(fid)
+                continue
+            eval_paths.append(rel)
+        if missing_eval:
+            sample = ", ".join(missing_eval[:10])
+            raise SystemExit(
+                f"[!] Could not resolve eval audio for {len(missing_eval)} entries. "
+                f"Tried extensions: {AUDIO_EXT_CANDIDATES}. Sample fids: {sample}"
+            )
     else:
         if not base_eval.exists():
             raise SystemExit(f"[!] Eval audio dir not found: {base_eval}")
-        eval_paths = [str(p.relative_to(DATA_ROOT)) for p in sorted(base_eval.glob(f"*{AUDIO_EXT}"))]
+        files: List[Path] = []
+        for ext in AUDIO_EXT_CANDIDATES:
+            files.extend(sorted(base_eval.glob(f"*{ext}")))
+        # de-duplicate while preserving order
+        seen = set()
+        dedup: List[Path] = []
+        for p in files:
+            if p not in seen:
+                seen.add(p)
+                dedup.append(p)
+        eval_paths = [str(p.relative_to(DATA_ROOT)) for p in dedup]
 
     # 5) Write indices
     idx = DATA_ROOT / INDEX_NAME

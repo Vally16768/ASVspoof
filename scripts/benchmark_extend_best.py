@@ -89,12 +89,15 @@ def _best_existing_code(primary_metric: str, tie_break_metric: str) -> str:
 
 def _generate_extension_codes(base_code: str, new_groups: List[str]) -> List[str]:
     forward, _ = _effective_letter_maps()
+    base_set = set(base_code)
     new_letters = []
     for g in new_groups:
         g_norm = g.strip().lower()
         if g_norm not in forward:
             raise SystemExit(f"[!] Feature group '{g_norm}' not present in letter mapping.")
-        new_letters.append(forward[g_norm])
+        letter = forward[g_norm]
+        if letter not in base_set and letter not in new_letters:
+            new_letters.append(letter)
 
     raw_codes = []
     for r in range(0, len(new_letters) + 1):

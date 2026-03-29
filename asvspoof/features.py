@@ -19,10 +19,44 @@ from .config import ExtractConfig, FEATURES_LIST
 META_COLS = ["split", "file_id", "path", "label", "target"]
 _SSL_GROUPS = {"wav2vec", "wavlm"}
 _SSL_BUNDLES: dict[str, tuple[Any, Any, Any, Any]] = {}
+_STAT_NAME_CACHE: Dict[Tuple[str, int], Tuple[List[str], List[str]]] = {}
+_SSL_RAW_NAME_CACHE: Dict[Tuple[str, int], List[str]] = {}
+_SSL_PCA_NAME_CACHE: Dict[Tuple[str, int], List[str]] = {}
 
 
 def _pf(msg: str) -> None:
     print(msg, flush=True)
+
+
+def _stat_col_names(prefix: str, n: int) -> Tuple[List[str], List[str]]:
+    key = (prefix, int(n))
+    cached = _STAT_NAME_CACHE.get(key)
+    if cached is not None:
+        return cached
+    means = [f"{prefix}_mean_{i:03d}" for i in range(1, n + 1)]
+    stds = [f"{prefix}_std_{i:03d}" for i in range(1, n + 1)]
+    _STAT_NAME_CACHE[key] = (means, stds)
+    return means, stds
+
+
+def _ssl_raw_col_names(group: str, n: int) -> List[str]:
+    key = (group, int(n))
+    cached = _SSL_RAW_NAME_CACHE.get(key)
+    if cached is not None:
+        return cached
+    cols = [f"{group}_raw_{i:04d}" for i in range(1, n + 1)]
+    _SSL_RAW_NAME_CACHE[key] = cols
+    return cols
+
+
+def _ssl_pca_col_names(group: str, n: int) -> List[str]:
+    key = (group, int(n))
+    cached = _SSL_PCA_NAME_CACHE.get(key)
+    if cached is not None:
+        return cached
+    cols = [f"{group}_pca_{i:03d}" for i in range(1, n + 1)]
+    _SSL_PCA_NAME_CACHE[key] = cols
+    return cols
 
 
 def normalize_groups(groups: Optional[Iterable[str]]) -> List[str]:
@@ -252,10 +286,11 @@ def _cepstral_with_deltas(base_frames_coeffs: np.ndarray) -> np.ndarray:
 def _append_stats_features(feats: Dict[str, float], prefix: str, mat: np.ndarray) -> None:
     v_mean = np.mean(mat, axis=0)
     v_std = np.std(mat, axis=0)
-    for i, v in enumerate(v_mean, start=1):
-        feats[f"{prefix}_mean_{i:03d}"] = float(v)
-    for i, v in enumerate(v_std, start=1):
-        feats[f"{prefix}_std_{i:03d}"] = float(v)
+    mean_cols, std_cols = _stat_col_names(prefix, v_mean.shape[0])
+    for col, v in zip(mean_cols, v_mean):
+        feats[col] = float(v)
+    for col, v in zip(std_cols, v_std):
+        feats[col] = float(v)
 
 
 # ----------------------------
@@ -373,7 +408,7 @@ def _fit_and_apply_ssl_pca(feat_df: pd.DataFrame, cfg: ExtractConfig, groups: Li
         pipe.fit(X_train)
 
         X_all = pipe.transform(out[raw_cols].to_numpy(dtype=np.float32, copy=False)).astype(np.float32)
-        pca_cols = [f"{g}_pca_{i:03d}" for i in range(1, X_all.shape[1] + 1)]
+        pca_cols = _ssl_pca_col_names(g, X_all.shape[1])
 
         for i, col in enumerate(pca_cols):
             out[col] = X_all[:, i]
@@ -502,15 +537,99 @@ def extract_features_for_path(
 
         if pca is not None:
             vec = pca.transform(raw_vec.reshape(1, -1)).astype(np.float32, copy=False).ravel()
-            for i, v in enumerate(vec, start=1):
-                feats[f"{g}_pca_{i:03d}"] = float(v)
+            pca_cols = _ssl_pca_col_names(g, vec.shape[0])
+            for col, v in zip(pca_cols, vec):
+                feats[col] = float(v)
         else:
-            for i, v in enumerate(raw_vec, start=1):
-                feats[f"{g}_raw_{i:04d}"] = float(v)
+            raw_cols = _ssl_raw_col_names(g, raw_vec.shape[0])
+            for col, v in zip(raw_cols, raw_vec):
+                feats[col] = float(v)
 
         _pf(f"    STAGE: {g:<11s} DONE")
 
     return feats
+
+
+def _extract_ssl_raw_for_path(path: Path, cfg: ExtractConfig, group: str) -> np.ndarray:
+    y, sr = _load_audio_strict(path, cfg.sampling_rate)
+    return _extract_ssl_raw_vector(y, sr, cfg, group)
+
+
+def _extract_single_ssl_group_with_pca(
+    jobs: List[Dict[str, Any]],
+    cfg: ExtractConfig,
+    group: str,
+    *,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    if group not in _SSL_GROUPS:
+        raise ValueError(f"Expected SSL group, got: {group}")
+
+    train_jobs = [j for j in jobs if str(j["split"]) == "train"]
+    if len(train_jobs) < 2:
+        raise ValueError(f"Need at least 2 train rows to fit PCA for {group}")
+
+    _pf(f"[*] SSL({group}) pass-1/2: fit PCA on train split ({len(train_jobs)} rows)")
+    X_train_rows: List[np.ndarray] = []
+    for i, jd in enumerate(train_jobs, start=1):
+        p = Path(jd["abs_path"])
+        if verbose:
+            _pf(f"[fit:{group} {i}/{len(train_jobs)}] {jd['file_id']} :: {p}")
+        try:
+            raw_vec = _extract_ssl_raw_for_path(p, cfg, group)
+        except Exception as e:
+            _pf(f"[!] FAIL fit:{group} {jd['file_id']} :: {p} :: {type(e).__name__}: {e}")
+            raise
+        X_train_rows.append(raw_vec)
+
+    X_train = np.stack(X_train_rows, axis=0).astype(np.float32, copy=False)
+    n_comp = int(min(cfg.ssl_pca_components, X_train.shape[0], X_train.shape[1]))
+    if n_comp < 1:
+        raise ValueError(f"Invalid PCA component count for {group}: {n_comp}")
+
+    pipe = make_pipeline(
+        StandardScaler(with_mean=True, with_std=True),
+        PCA(n_components=n_comp, random_state=cfg.random_state),
+    )
+    pipe.fit(X_train)
+
+    transforms_dir = Path(cfg.out_dir) / "transforms"
+    transforms_dir.mkdir(parents=True, exist_ok=True)
+    joblib.dump(pipe, transforms_dir / f"{group}_pca.joblib")
+    pca_cols = _ssl_pca_col_names(group, n_comp)
+
+    _pf(f"[*] SSL({group}) pass-2/2: transform all rows ({len(jobs)} rows)")
+    rows: List[Dict[str, object]] = []
+    for i, jd in enumerate(jobs, start=1):
+        p = Path(jd["abs_path"])
+        if verbose:
+            _pf(f"[{i}/{len(jobs)}] START {jd['split']} {jd['file_id']} :: {p}")
+        t0 = monotonic()
+        try:
+            raw_vec = _extract_ssl_raw_for_path(p, cfg, group)
+            pca_vec = pipe.transform(raw_vec.reshape(1, -1)).astype(np.float32, copy=False).ravel()
+        except Exception as e:
+            _pf(f"[!] FAIL {jd['split']} {jd['file_id']} :: {p} :: {type(e).__name__}: {e}")
+            raise
+
+        dt = monotonic() - t0
+        if verbose:
+            _pf(f"[{i}/{len(jobs)}] DONE  {jd['split']} {jd['file_id']} :: {p} :: {dt:.3f}s")
+
+        base: Dict[str, object] = {
+            "split": jd["split"],
+            "file_id": jd["file_id"],
+            "path": str(p),
+            "label": jd["label"],
+            "target": jd["target"],
+        }
+        for col, v in zip(pca_cols, pca_vec):
+            base[col] = float(v)
+        rows.append(base)
+
+    feat_df = pd.DataFrame(rows)
+    other_cols = sorted([c for c in feat_df.columns if c not in META_COLS])
+    return feat_df[META_COLS + other_cols]
 
 
 def extract_all_features(
@@ -539,6 +658,11 @@ def extract_all_features(
     ]
     if not jobs:
         return pd.DataFrame(columns=META_COLS)
+
+    # Memory-safe path for SSL-only extraction with PCA:
+    # fit on train rows, then transform per-row without materializing raw features for all rows.
+    if fit_ssl_pca and len(groups) == 1 and groups[0] in _SSL_GROUPS:
+        return _extract_single_ssl_group_with_pca(jobs, cfg, groups[0], verbose=verbose)
 
     first = jobs[0]
     p0 = Path(first["abs_path"])

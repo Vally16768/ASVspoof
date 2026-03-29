@@ -2,6 +2,8 @@
 import os
 import json
 import argparse
+import sys
+import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -14,6 +16,48 @@ os.environ.setdefault("KERAS_BACKEND", "tensorflow")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("TF_NUM_INTRAOP_THREADS", "1")
 os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
+
+
+def _configure_tf_cuda_runtime_from_venv() -> None:
+    """
+    Ensure TF can locate CUDA/cuDNN shared libs installed via pip in this venv.
+    Must run before importing tensorflow/keras.
+    """
+    venv_root = Path(os.environ.get("VIRTUAL_ENV", sys.prefix)).resolve()
+    sp_nvidia = venv_root / f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages/nvidia"
+    if not sp_nvidia.is_dir():
+        return
+
+    try:
+        out = subprocess.check_output(
+            ["find", str(sp_nvidia), "-type", "d", "-name", "lib"],
+            text=True,
+        )
+        lib_dirs = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    except Exception:
+        lib_dirs = [str(p) for p in sp_nvidia.glob("*/lib") if p.is_dir()]
+    if not lib_dirs:
+        return
+
+    current = os.environ.get("LD_LIBRARY_PATH", "")
+    current_parts = [p for p in current.split(":") if p]
+    missing = [p for p in lib_dirs if p not in current_parts]
+    if not missing:
+        return
+
+    new_ld = ":".join(lib_dirs + current_parts)
+    env = os.environ.copy()
+    env["LD_LIBRARY_PATH"] = new_ld
+
+    # LD_LIBRARY_PATH must be present at process start for reliable TF CUDA loading.
+    if env.get("ASVSPOOF_TF_REEXEC") != "1":
+        env["ASVSPOOF_TF_REEXEC"] = "1"
+        os.execvpe(sys.executable, [sys.executable, *sys.argv], env)
+
+    os.environ["LD_LIBRARY_PATH"] = new_ld
+
+
+_configure_tf_cuda_runtime_from_venv()
 
 # --- Repo API ---
 from asvspoof.features import extract_features_for_path, load_pca_models
@@ -32,9 +76,9 @@ def load_model_robust(model_path: Path):
         import keras
         import tensorflow as tf
 
-        tf.config.set_visible_devices([], "GPU")
-        tf.config.threading.set_intra_op_parallelism_threads(1)
-        tf.config.threading.set_inter_op_parallelism_threads(1)
+        gpus = tf.config.list_physical_devices("GPU")
+        if not gpus:
+            raise RuntimeError("TensorFlow GPU is required but not visible.")
         m = keras.models.load_model(str(model_path), compile=False)
         print("[stage] model loaded via keras")
         return m
@@ -42,9 +86,9 @@ def load_model_robust(model_path: Path):
         print(f"[warn] keras load failed: {type(e).__name__}: {e}")
         import tensorflow as tf
 
-        tf.config.set_visible_devices([], "GPU")
-        tf.config.threading.set_intra_op_parallelism_threads(1)
-        tf.config.threading.set_inter_op_parallelism_threads(1)
+        gpus = tf.config.list_physical_devices("GPU")
+        if not gpus:
+            raise SystemExit("[!] TensorFlow GPU is required but not visible.")
         m = tf.keras.models.load_model(str(model_path), compile=False)
         print("[stage] model loaded via tf.keras")
         return m

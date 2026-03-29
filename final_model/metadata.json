@@ -1,0 +1,60 @@
+{
+  "timestamp_utc": "2026-03-28T22:22:45.789755+00:00",
+  "combo": "ABCDHKLMNO",
+  "base_code": "AHKLMNO",
+  "evaluated_codes": [
+    "ABCDEHKLMNO",
+    "ABCDHKLMNO",
+    "ABCEHKLMNO",
+    "ABCHKLMNO",
+    "ABDEHKLMNO",
+    "ABDHKLMNO",
+    "ABEHKLMNO",
+    "ABHKLMNO",
+    "ACDEHKLMNO",
+    "ACDHKLMNO",
+    "ACEHKLMNO",
+    "ACHKLMNO",
+    "ADEHKLMNO",
+    "ADHKLMNO",
+    "AEHKLMNO",
+    "AHKLMNO"
+  ],
+  "primary_metric": "min_tDCF",
+  "tie_break_metric": "accuracy",
+  "winner_metrics": {
+    "accuracy": 0.9998792464981484,
+    "balanced_accuracy": 0.99993272335845,
+    "roc_auc": 1.0,
+    "eer": 0.0,
+    "eer_threshold": 0.8592388033866882,
+    "f1_bonafide": 0.9994116493430084,
+    "f1_spoof": 0.999932718831999,
+    "n_test": 24844,
+    "n_test_pos_bonafide": 2548,
+    "n_test_neg_spoof": 22296
+  },
+  "winner_tdcf_metrics": {
+    "asv_score_file": "/home/vali/Desktop/ASVspoof/tDCF_python_v2/scores/ASVspoof2019_LA_eval_asv_scores.txt",
+    "eer_asv": 0.02457783738686887,
+    "asv_threshold": -5.680051,
+    "Pfa_asv": 0.024604674888228765,
+    "Pmiss_asv": 0.024581005586592177,
+    "Pfa_spoof_asv": 0.7606524529601453,
+    "eer_cm": 0.0,
+    "min_tDCF": 0.06273287922336382,
+    "min_tDCF_threshold_index": 22296,
+    "cm_threshold_at_min_tDCF": 0.8198868,
+    "Nbona": 2548,
+    "Nspoof": 22296
+  },
+  "ssl": {
+    "wav2vec_model_id": "facebook/wav2vec2-xls-r-300m",
+    "wavlm_model_id": "microsoft/wavlm-large",
+    "pca_components": 128,
+    "copied_transforms": [
+      "wav2vec_pca.joblib",
+      "wavlm_pca.joblib"
+    ]
+  }
+}
