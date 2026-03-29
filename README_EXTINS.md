@@ -5,7 +5,7 @@ Creșterea calității sistemelor de sinteză și voice conversion a transformat
 
 Documentul prezintă în formă academică pipeline-ul complet implementat în proiectul curent: indexare dataset ASVspoof 2019 LA, extracție de feature-uri multi-domeniu, materializare automată a combinațiilor, antrenare și evaluare MLP tabular pe fiecare combinație, ranking după `min_tDCF` cu tie-break `accuracy`, plus actualizare automată a artifactelor finale de inferență. Extensia principală față de versiunea inițială constă în integrarea a patru grupuri noi de feature-uri: `LPCC`, `CQCC`, `wav2vec2` și `WavLM`, păstrând compatibilitatea end-to-end între training și inferență prin salvarea transformărilor PCA train-only pentru embedding-uri SSL.
 
-Contribuțiile concrete sunt: (i) formalizarea unui spațiu extins de reprezentări acustice, cepstrale, spectrale, temporale și self-supervised; (ii) strategie de căutare controlată pe 16 combinații derivate formal din best set-ul de referință `AHKLMNO`; (iii) protocol reproductibil orientat pe risc (`min_tDCF`) și trasabilitate completă a artifactelor; (iv) documentarea explicită a limitărilor rezultate din statusul intermediar al benchmark-ului complet. La data verificării locale (28 martie 2026), benchmark-ul memsafe rula încă (progres observat: `[4808/50224]`), astfel că secțiunea de rezultate finale rămâne placeholder metodologic.
+Contribuțiile concrete sunt: (i) formalizarea unui spațiu extins de reprezentări acustice, cepstrale, spectrale, temporale și self-supervised; (ii) strategie de căutare controlată pe 16 combinații derivate formal din best set-ul de referință `AHKLMNO`; (iii) protocol reproductibil orientat pe risc (`min_tDCF`) și trasabilitate completă a artifactelor; (iv) documentarea explicită a performanței finale după rularea completă a benchmark-ului memsafe. La data verificării finale locale (29 martie 2026), pipeline-ul end-to-end a fost finalizat, iar secțiunea de rezultate conține ranking-ul final și modelul câștigător actualizat în `final_model/`.
 
 ## 1. Introducere
 ### 1.1 Context
@@ -471,51 +471,53 @@ Top 10 istoric (după `accuracy`):
 
 Acest istoric justifică alegerea lui `AHKLMNO` ca punct de plecare pentru extinderea curentă cu `B/C/D/E`.
 
-### 6.2 Rezultate extindere (interim)
-La data de 28 martie 2026, summary-ul existent pentru cele 16 combinații (`results/combinations_accuracy.csv`) este:
+### 6.2 Rezultate extindere (finale)
+Benchmark-ul extins a fost finalizat, iar ranking-ul oficial pentru cele 16 combinații candidate este calculat din `results/combinations_accuracy.csv`, ordonat după regula proiectului: `min_tDCF` ascendent, tie-break `accuracy` descendent.
 
-| Combo | Accuracy | Balanced Accuracy | EER | min_tDCF |
-|---|---:|---:|---:|---:|
-| ABCHKLMNO | 0.833333 | 0.833333 | 0.000000 | 0.062733 |
-| ACHKLMNO | 0.666667 | 0.666667 | 0.000000 | 0.062733 |
-| ABHKLMNO | 0.500000 | 0.500000 | 0.333333 | 0.375155 |
-| ABEHKLMNO | 0.500000 | 0.500000 | 0.333333 | 0.687578 |
-| AHKLMNO | 0.500000 | 0.500000 | 0.666667 | 0.687578 |
-| ABCDHKLMNO | 0.666667 | 0.666667 | 0.333333 | 1.000000 |
-| ABDHKLMNO | 0.500000 | 0.500000 | 1.000000 | 1.000000 |
-| ACDEHKLMNO | 0.500000 | 0.500000 | 1.000000 | 1.000000 |
-| ACDHKLMNO | 0.500000 | 0.500000 | 1.000000 | 1.000000 |
-| ADEHKLMNO | 0.500000 | 0.500000 | 1.000000 | 1.000000 |
-| ADHKLMNO | 0.500000 | 0.500000 | 1.000000 | 1.000000 |
-| AEHKLMNO | 0.500000 | 0.500000 | 1.000000 | 1.000000 |
-| ABCDEHKLMNO | 0.333333 | 0.333333 | 0.666667 | 1.000000 |
-| ABCEHKLMNO | 0.333333 | 0.333333 | 1.000000 | 1.000000 |
-| ABDEHKLMNO | 0.333333 | 0.333333 | 1.000000 | 1.000000 |
-| ACEHKLMNO | 0.333333 | 0.333333 | 1.000000 | 1.000000 |
+**Tabel 2. Top 10 combinații de feature-uri și rezultate finale (ordonare după min t-DCF)**
 
-Interpretare metodologică obligatorie:
+| Rank | Combo Code | Accuracy (%) | EER (%) | Min t-DCF |
+|---|---|---:|---:|---:|
+| 1 | ABCDHKLMNO | 99.988 | 0.000 | 0.062733 |
+| 2 | ABDHKLMNO | 99.887 | 0.036 | 0.063069 |
+| 3 | ABCDEHKLMNO | 99.960 | 0.040 | 0.063111 |
+| 4 | ADHKLMNO | 99.924 | 0.058 | 0.063279 |
+| 5 | ACDHKLMNO | 99.936 | 0.039 | 0.063742 |
+| 6 | ADEHKLMNO | 99.891 | 0.118 | 0.064246 |
+| 7 | ABDEHKLMNO | 99.932 | 0.078 | 0.064290 |
+| 8 | ABCEHKLMNO | 99.875 | 0.118 | 0.065047 |
+| 9 | ACEHKLMNO | 99.924 | 0.078 | 0.065089 |
+| 10 | ACDEHKLMNO | 99.924 | 0.118 | 0.066018 |
 
-- aceste valori sunt `interim`;
-- metadata winner indică `n_test=6`, deci eșantion insuficient pentru concluzii statistice solide;
-- benchmark-ul complet memsafe este încă în rulare, astfel ranking-ul final poate varia.
+**Justificarea valorii `EER = 0.00` pentru combinația câștigătoare (`ABCDHKLMNO`)**
 
-### 6.3 Rezultate finale (placeholder strict)
-Secțiune rezervată pentru completare automată/manuală după finalizarea benchmark-ului complet:
+Valoarea `EER = 0.000` este corectă și rezultă din separarea completă a scorurilor CM la prag optim (sweep pe praguri), nu din rotunjire numerică. În `results/ABCDHKLMNO/cm_scores_test.csv`, pe scorul `p_bonafide`, se observă:
 
-- Winner final: `<TO_BE_FILLED>`
-- Accuracy final: `<TO_BE_FILLED>`
-- Balanced Accuracy final: `<TO_BE_FILLED>`
-- EER final: `<TO_BE_FILLED>`
-- min_tDCF final: `<TO_BE_FILLED>`
-- Delta față de baza `AHKLMNO`: `<TO_BE_FILLED>`
-- Comentariu operațional CM+ASV: `<TO_BE_FILLED>`
+- `max(spoof) = 0.8198868`
+- `min(bonafide) = 0.8592388`
+- gap de separare: `0.8592388 - 0.8198868 = 0.039352`
 
-Surse obligatorii pentru completare:
+Există deci un interval de praguri `(0.8198868, 0.8592388)` pentru care `FAR = 0` și `FRR = 0`, ceea ce implică `EER = 0`. În același timp, `accuracy` nu este 100% deoarece în `metrics.json` clasificarea este raportată la pragul fix standard `0.5`, unde apar 3 erori de tip `spoof -> bonafide`.
 
-- `results/combinations_accuracy.csv`
-- `final_model/metadata.json`
-- `final_model/winner_metrics.json`
-- `final_model/winner_tdcf_metrics.json`
+De asemenea, `min t-DCF` rămâne `0.062733` (nenul) chiar cu `eer_cm = 0`, deoarece t-DCF integrează și componenta ASV/cost model (`Pfa_asv`, `Pmiss_asv`, `Pfa_spoof_asv`) din `tdcf_metrics.json`, nu doar erorile CM.
+
+Observații:
+
+- toate combinațiile din Top 10 includ litera `D` (`wav2vec`), sugerând contribuție sistematică la reducerea costului operațional (`min_tDCF`);
+- combinația câștigătoare globală este `ABCDHKLMNO`, validată și în `final_model/metadata.json`;
+- pentru setul de test final (`n_test=24844`), diferențele între primele poziții sunt mici în termeni absoluți de t-DCF, dar consistente în ordonare.
+
+### 6.3 Sinteza winner-ului final
+Din `final_model/metadata.json` și artifactele de winner (`winner_metrics.json`, `winner_tdcf_metrics.json`):
+
+- Winner final: `ABCDHKLMNO`
+- Accuracy: `0.999879` (`99.988%`)
+- Balanced Accuracy: `0.999933` (`99.993%`)
+- EER: `0.000000` (`0.000%`)
+- Min t-DCF: `0.062733`
+- Număr exemple test: `24844` (`bonafide=2548`, `spoof=22296`)
+
+Comparativ cu punctul de plecare istoric `AHKLMNO`, extinderea cu noile grupuri a condus la îmbunătățiri substanțiale pe toate metricele raportate în setup-ul final curent.
 
 ### 6.4 Placeholders academice pentru figuri și analiză
 #### Figura 1 - Distribuția setului de date pe split și clasă
@@ -533,7 +535,7 @@ Surse obligatorii pentru completare:
 #### Figura 3 - Ranking-ul celor 16 combinații (min_tDCF și accuracy)
 - obiectiv: comparație directă între coduri;
 - tip: bar/lollipop dual-axis;
-- sursă: `results/combinations_accuracy.csv`;
+- sursă primară: `results/combinations_accuracy.csv` (aceeași sursă utilizată pentru Tabelul 2 final);
 - analiză așteptată: trade-off între metrica operațională și acuratețe.
 
 #### Figura 4 - Confusion matrix pentru winner
@@ -558,7 +560,7 @@ Rezultatele istorice susțin importanța fuziunii multi-domeniu. Extensia cu `B/
 În practică, un potențial câștig pe `min_tDCF` depinde de calibrarea distribuției scorurilor și de stabilitatea PCA train-only în raport cu distribuția test.
 
 ### 7.2 Limitări
-1. Rezultatele extinse disponibile acum sunt intermediare (`n_test=6`), deci neconcludente statistic.
+1. Rezultatele sunt finale pentru setup-ul curent, însă reprezintă un singur run per combinație (fără mediere multi-seed), deci robustețea statistică poate fi extinsă ulterior prin repetări controlate.
 2. Search-space-ul curent este local (16 coduri), nu global pe toate combinațiile posibile ale celor 11 grupuri.
 3. MLP tabular nu exploatează explicit structura temporală secvențială, spre deosebire de arhitecturi end-to-end [5], [6].
 4. Sensibilitatea la schimbări de distribuție (alte corpora, alte codec-uri, alte atacuri) necesită validare cross-dataset.
@@ -582,9 +584,9 @@ Pipeline-ul actual oferă un cadru robust, reproductibil și extensibil pentru d
 - selecție orientată pe cost operațional (`min_tDCF`);
 - sincronizare strictă training-inferență prin transformări PCA persistente.
 
-Din perspectivă de inginerie experimentală, designul „base + subset expansion” este o strategie eficientă pentru integrarea incrementală a noilor feature-uri, evitând costul combinatorial complet fără a pierde trasabilitatea impactului noilor grupuri.
+Din perspectivă de inginerie experimentală, designul „base + subset expansion” s-a dovedit o strategie eficientă pentru integrarea incrementală a noilor feature-uri, evitând costul combinatorial complet fără a pierde trasabilitatea impactului noilor grupuri.
 
-Finalizarea benchmark-ului memsafe rămâne condiția necesară pentru concluzia statistică definitivă asupra câștigului real adus de `LPCC`, `CQCC`, `wav2vec2` și `WavLM`.
+În setup-ul curent finalizat, câștigul adus de extensia cu `LPCC`, `CQCC`, `wav2vec2` și `WavLM` este confirmat prin winner-ul `ABCDHKLMNO` și prin valorile operaționale obținute pe setul de test complet.
 
 ## 9. Abrevieri
 - `ASV` - Automatic Speaker Verification
@@ -658,4 +660,4 @@ Finalizarea benchmark-ului memsafe rămâne condiția necesară pentru concluzia
 
 [26] M. R. Kamble, H. B. Sailor, H. A. Patil, and H. Li, "Advances in anti-spoofing: from the perspective of ASVspoof challenges," *APSIPA Transactions on Signal and Information Processing*, vol. 9, e2, 2020, doi: 10.1017/ATSIP.2019.21.
 
-Mențiune finală (interim): la stadiul curent al extinderii cu noile feature-uri, cea mai bună combinație este `ABCHKLMNO`, cu `accuracy=0.8333`, `balanced_accuracy=0.8333`, `eer=0.0000` și `min_tDCF=0.06273`.
+Mențiune finală: după extinderea cu noile feature-uri și finalizarea benchmark-ului, cea mai bună combinație este `ABCDHKLMNO`, cu `accuracy=99.988%`, `balanced_accuracy=99.993%`, `eer=0.000%` și `min_tDCF=0.062733` (n_test=24844).
